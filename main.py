@@ -11,7 +11,7 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 @bot.event
 async def on_ready():
     print(f"org slush online como {bot.user}")
-    await bot.change_presence(activity=discord.Game(name="suporte FUSION"))
+    await bot.change_presence(activity=discord.Game(name="suporte ORG SLUSH"))
     try:
         await bot.tree.sync()
         print("Comandos sincronizados!")
@@ -34,7 +34,7 @@ async def ticket(interaction: discord.Interaction):
 
     channel = await guild.create_text_channel(f"ticket-{interaction.user.name}", overwrites=overwrites, reason=f"Ticket de {interaction.user}")
     await interaction.response.send_message(f"Seu ticket foi criado: {channel.mention}", ephemeral=True)
-    await channel.send(f"{interaction.user.mention} Bem-vindo ao suporte FUSION! Explique seu problema aqui. Digite `!fechar` para fechar.")
+    await channel.send(f"{interaction.user.mention} Bem-vindo ao suporte ORG SLUSH! Explique seu problema aqui. Digite `!fechar` para fechar.")
 
 @bot.command()
 async def fechar(ctx):
