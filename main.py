@@ -1,14 +1,14 @@
 import discord
 from discord.ext import commands
 import os
+import asyncio
 
 intents = discord.Intents.all()
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-# ========= CONFIG =========
 CANAL_SUPORTE = "suporte"
 VALORES = [0.20, 0.40, 0.70, 1.00, 2.00, 3.00, 4.00, 5.00, 7.00, 10.00, 14.00, 19.00, 30.00, 50.00, 70.00, 100.00, 150.00, 200.00]
-filas = {} # {canal_id: {valor: {tipo: [users]}}}
+filas = {}
 
 def formatar(v): return f"R$ {v:.2f}".replace('.', ',')
 def get_qtd(nome):
@@ -25,7 +25,6 @@ def get_fila(canal_id, valor):
     if valor not in filas[canal_id]: filas[canal_id][valor] = {"Gelo Infinito": [], "Gelo Normal": []}
     return filas[canal_id][valor]
 
-# ========= BOT DE FILA =========
 class FilaView(discord.ui.View):
     def __init__(self, canal_id, valor):
         super().__init__(timeout=None)
@@ -84,7 +83,6 @@ async def atualizar_canal(channel):
         else: embed.add_field(name="Jogadores", value=texto, inline=False)
         await channel.send(embed=embed, view=FilaView(cid, valor))
 
-# ========= BOT DE SUPORTE =========
 class TicketView(discord.ui.View):
     def __init__(self): super().__init__(timeout=None)
     @discord.ui.button(label="Abrir Ticket", style=discord.ButtonStyle.blurple, emoji="🎫", custom_id="ticket_abrir")
@@ -93,24 +91,23 @@ class TicketView(discord.ui.View):
         overwrites={guild.default_role: discord.PermissionOverwrite(view_channel=False), i.user: discord.PermissionOverwrite(view_channel=True, send_messages=True), guild.me: discord.PermissionOverwrite(view_channel=True, send_messages=True)}
         cat = discord.utils.get(guild.categories, name="Tickets")
         canal = await guild.create_text_channel(f"ticket-{i.user.name}", overwrites=overwrites, category=cat)
-        await canal.send(embed=discord.Embed(title="Suporte ORG SLUSH", description=f"{i.user.mention} Explique seu problema aqui!\nDigite `!fechar` para fechar.", color=0x00FF00))
+        await canal.send(embed=discord.Embed(title="Suporte ORG SLUSH", description=f"{i.user.mention} Explique seu problema!\n`!fechar` pra fechar.", color=0x00FF00))
         await i.response.send_message(f"Ticket criado: {canal.mention}", ephemeral=True)
 
-async def setup_suporte(guild):
+async def setup_suporte_func(guild):
     canal_sup = discord.utils.find(lambda c: CANAL_SUPORTE in c.name.lower(), guild.text_channels)
     if not canal_sup: return
     async for m in canal_sup.history(limit=20):
         try: await m.delete()
         except: pass
-    embed = discord.Embed(title="📢 SUPORTE ORG SLUSH", description="Precisa de ajuda com apostado, pagamento ou denúncia?\n\nClique no botão abaixo para abrir um ticket privado com a administração.\n\n**Não mande mensagem aqui no canal, use o botão!**", color=0x2B88D8)
+    embed = discord.Embed(title="📢 SUPORTE ORG SLUSH", description="Precisa de ajuda?\nClique abaixo para abrir um ticket privado.\n\n**Não mande mensagem aqui, use o botão!**", color=0x2B88D8)
     await canal_sup.send(embed=embed, view=TicketView())
 
 @bot.event
 async def on_ready():
     print(f"Bot ON: {bot.user}")
-    bot.add_view(TicketView()) # pra botão não morrer ao reiniciar
+    bot.add_view(TicketView())
 
-# ANTI-BAGUNÇA DO #SUPORTE
 @bot.event
 async def on_message(message):
     if message.author.bot:
@@ -120,7 +117,6 @@ async def on_message(message):
         if not message.author.guild_permissions.manage_messages:
             try:
                 await message.delete()
-                await message.author.send(f"⚠️ No canal {message.channel.mention} não pode conversar! Clique no botão `Abrir Ticket`.")
             except: pass
             return
     await bot.process_commands(message)
@@ -129,34 +125,20 @@ async def on_message(message):
 async def fechar(ctx):
     if "ticket-" in ctx.channel.name:
         await ctx.send("Fechando em 3s...")
-        await discord.utils.sleep_until(discord.utils.utcnow() + discord.timedelta(seconds=3))
+        await asyncio.sleep(3)
         await ctx.channel.delete()
 
 @bot.command()
 async def sala(ctx, id_sala: str, senha: str):
     if not ctx.author.guild_permissions.manage_messages: return
-    embed = discord.Embed(title="🎮 SALA CRIADA!", description=f"**ID:** `{id_sala}`\n**Senha:** `{senha}`\n\nEntrem agora!", color=0xFF0000)
+    embed = discord.Embed(title="🎮 SALA CRIADA!", description=f"**ID:** `{id_sala}`\n**Senha:** `{senha}`", color=0xFF0000)
     await ctx.send(content="@here", embed=embed)
-
-@bot.command()
-async def setup_fila(ctx):
-    if not ctx.author.guild_permissions.administrator: return
-    await ctx.send(f"Configurando {len(get_canais_fila(ctx.guild))} canais de apostado...")
-    for ch in get_canais_fila(ctx.guild):
-        await atualizar_canal(ch)
-    await ctx.send("✅ Filas prontas!")
-
-@bot.command()
-async def setup_suporte(ctx):
-    if not ctx.author.guild_permissions.administrator: return
-    await setup_suporte(ctx.guild)
-    await ctx.send("✅ Suporte configurado!")
 
 @bot.command()
 async def setup_tudo(ctx):
     if not ctx.author.guild_permissions.administrator: return
-    await ctx.send("Configurando tudo...")
-    await setup_suporte(ctx.guild)
+    await ctx.send("Configurando...")
+    await setup_suporte_func(ctx.guild)
     for ch in get_canais_fila(ctx.guild):
         await atualizar_canal(ch)
     await ctx.send("✅ ORG SLUSH 100% configurada!")
