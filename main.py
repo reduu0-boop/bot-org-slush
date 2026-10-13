@@ -2,15 +2,19 @@ import discord, os, re, asyncio
 from discord.ext import commands
 
 TOKEN = os.getenv("DISCORD_TOKEN") or os.getenv("TOKEN")
-PIX_KEY = os.getenv("PIX_KEY") # pega da variavel do Railway
+PIX_KEY = os.getenv("PIX_KEY") or "PIX_NAO_CONFIGURADO"
 VALORES = [0.70, 1.00, 2.00, 3.00, 5.00, 7.00, 10.00, 15.00, 20.00, 30.00, 50.00, 100.00, 200.00]
 CATEGORIA_PARTIDAS = "PARTIDAS"
 CATEGORIA_TICKETS = "TICKETS"
 
-intents = discord.Intents.all()
+intents = discord.Intents.default()
+intents.message_content = True
+intents.members = True
+intents.guilds = True
+
 bot = commands.Bot(command_prefix="!", intents=intents)
 filas = {}
-aps = {} # guarda quem aceitou
+aps = {}
 
 def formatar(v): return f"R$ {v:.2f}".replace('.', ',')
 def get_taxa(valor): return 2.50 if valor >= 30 else 0.50
@@ -69,7 +73,6 @@ async def achar_e_editar(canal, valor, nome_canal):
                 except: pass
     return False
 
-# ===== AP COM ACEITE =====
 class AceitarAPView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
@@ -80,22 +83,17 @@ class AceitarAPView(discord.ui.View):
         dados = aps.get(cid)
         if not dados:
             return await interaction.response.send_message("Erro: partida nao encontrada.", ephemeral=True)
-
         if interaction.user.id not in [j.id for j in dados["jogadores"]]:
             return await interaction.response.send_message("Voce nao faz parte dessa AP.", ephemeral=True)
-
         if interaction.user.id in dados["aceitos"]:
             return await interaction.response.send_message("Voce ja aceitou!", ephemeral=True)
 
         dados["aceitos"].add(interaction.user.id)
-
         qtd = len(dados["jogadores"])
         aceitos = len(dados["aceitos"])
 
-        # atualiza embed
         emb = interaction.message.embeds[0]
         lista_aceitos = "\n".join([f"✅ <@{uid}>" for uid in dados["aceitos"]])
-        if not lista_aceitos: lista_aceitos = "Ninguem aceitou ainda"
 
         emb.description = (
             f"**Valor:** {formatar(dados['valor'])}\n"
@@ -113,9 +111,9 @@ class AceitarAPView(discord.ui.View):
             emb.description += "\n🎮 **Os 2 aceitaram! Podem criar a sala agora!**"
             await interaction.message.edit(embed=emb, view=FecharPartidaView())
             await interaction.response.send_message("Voce aceitou! Partida liberada!", ephemeral=False)
-            await interaction.channel.send(f"@everyone Partida liberada! { ' '.join([f'<@{j.id}>' for j in dados['jogadores']]) } criem a sala!")
+            await interaction.channel.send(f"@everyone Partida liberada! Criem a sala!")
         else:
-            emb.description += f"\n⏳ Aguardando {qtd - aceitos} jogador(es) aceitar..."
+            emb.description += f"\n⏳ Aguardando {qtd - aceitos} jogador(es)..."
             await interaction.message.edit(embed=emb)
             await interaction.response.send_message(f"Voce aceitou! ({aceitos}/{qtd})", ephemeral=True)
 
@@ -125,7 +123,6 @@ class AceitarAPView(discord.ui.View):
         dados = aps.get(cid)
         if not dados or interaction.user.id not in [j.id for j in dados["jogadores"]]:
             return await interaction.response.send_message("Voce nao faz parte dessa AP.", ephemeral=True)
-
         await interaction.response.send_message("AP cancelada, fechando...", ephemeral=False)
         aps.pop(cid, None)
         await asyncio.sleep(3)
@@ -142,37 +139,23 @@ async def criar_canal_partida(guild, jogadores, valor, tipo_fila, canal_origem_n
     }
     for jogador in jogadores:
         overwrites[jogador] = discord.PermissionOverwrite(view_channel=True, send_messages=True, read_message_history=True)
-
     taxa = get_taxa(valor)
     total = valor + taxa
     nome_canal_priv = f"ap-{str(valor).replace('.','-')}-{tipo_fila.lower().replace(' ','')[:4]}-{jogadores[0].name[:5]}".lower()[:30]
     canal_priv = await guild.create_text_channel(nome_canal_priv, category=categoria, overwrites=overwrites)
-
-    aps[canal_priv.id] = {
-        "jogadores": jogadores,
-        "aceitos": set(),
-        "valor": valor,
-        "taxa": taxa,
-        "total": total,
-        "tipo": tipo_fila
-    }
-
+    aps[canal_priv.id] = {"jogadores": jogadores, "aceitos": set(), "valor": valor, "taxa": taxa, "total": total, "tipo": tipo_fila}
     emb = discord.Embed(
         title=f"⏳ Aguardando Aceite - {formatar_titulo(canal_origem_nome)}",
         color=0xFFFF00,
         description=(
-            f"**Valor:** {formatar(valor)}\n"
-            f"**Taxa:** {formatar(taxa)}\n"
-            f"**Total:** **{formatar(total)}**\n"
-            f"**PIX:** `{PIX_KEY}`\n\n"
-            f"**Tipo:** {tipo_fila}\n"
+            f"**Valor:** {formatar(valor)}\n**Taxa:** {formatar(taxa)}\n**Total:** **{formatar(total)}**\n"
+            f"**PIX:** `{PIX_KEY}`\n\n**Tipo:** {tipo_fila}\n"
             f"**Jogadores:** {' '.join([f'<@{j.id}>' for j in jogadores])}\n\n"
-            f"**Aceitaram (0/{len(jogadores)}):**\nNinguem aceitou ainda\n\n"
-            f"⏳ Aguardando {len(jogadores)} jogador(es) aceitar..."
+            f"**Aceitaram (0/{len(jogadores)}):**\nNinguem aceitou ainda\n\n⏳ Aguardando {len(jogadores)} jogador(es) aceitar..."
         )
     )
     mentions = " ".join([f"<@{j.id}>" for j in jogadores])
-    await canal_priv.send(content=f"{mentions} - aceitem o AP para liberar a sala!", embed=emb, view=AceitarAPView())
+    await canal_priv.send(content=f"{mentions} - aceitem o AP!", embed=emb, view=AceitarAPView())
     return canal_priv
 
 class FecharPartidaView(discord.ui.View):
@@ -274,11 +257,7 @@ class AbrirTicketButton(discord.ui.Button):
             if "staff" in role.name.lower() or "adm" in role.name.lower() or "mod" in role.name.lower() or "suporte" in role.name.lower():
                 overwrites[role] = discord.PermissionOverwrite(view_channel=True, send_messages=True)
         canal = await guild.create_text_channel(f"ticket-{interaction.user.name}", category=categoria, topic=str(interaction.user.id), overwrites=overwrites)
-        emb = discord.Embed(
-            title="SUPORTE ORG SLUSH",
-            description=f"Ola {interaction.user.mention}, seu ticket foi criado!\n\nDescreva seu problema que um staff vai te atender.",
-            color=0x00FF88
-        )
+        emb = discord.Embed(title="SUPORTE ORG SLUSH", description=f"Ola {interaction.user.mention}, seu ticket foi criado!\n\nDescreva seu problema que um staff vai te atender.", color=0x00FF88)
         await canal.send(content=f"{interaction.user.mention}", embed=emb, view=FecharTicketView())
         await interaction.response.send_message(f"Ticket criado: {canal.mention}", ephemeral=True)
 
@@ -312,11 +291,31 @@ async def fila(ctx):
             for v in VALORES:
                 await canal.send(embed=build_embed_fila(canal, v), view=FilaView(v, canal.id, canal.name))
                 total+=1
-    await ctx.send(f"{total} fileiras criadas!")
+    await ctx.send(f"✅ {total} fileiras criadas!")
 
 @bot.command()
 async def suporte(ctx):
     emb = discord.Embed(title="SUPORTE ORG SLUSH", description="Clique abaixo para abrir ticket privado.", color=0x5865F2)
     await ctx.send(embed=emb, view=TicketView())
+
+@bot.command()
+async def reset_total(ctx):
+    if not ctx.author.guild_permissions.administrator:
+        return await ctx.send("Voce precisa ser ADM.")
+    await ctx.send("🔄 Apagando tudo... aguarde 1 minuto.")
+    apag=0
+    for canal in ctx.guild.text_channels:
+        if eh_canal_alvo(canal.name):
+            try:
+                async for msg in canal.history(limit=500):
+                    if msg.author == bot.user:
+                        try:
+                            await msg.delete()
+                            apag+=1
+                            await asyncio.sleep(0.4)
+                        except: pass
+                filas.pop(canal.id, None)
+            except: pass
+    await ctx.send(f"✅ Reset finalizado! Apaguei {apag} msgs. Agora use `!fila`")
 
 bot.run(TOKEN)
