@@ -1,24 +1,27 @@
-import discord
+import discord, os, asyncio, re, requests, uuid
 from discord.ext import commands
-import os, asyncio, random, re
+from datetime import datetime, timedelta
 
 TOKEN = os.getenv("DISCORD_TOKEN") or os.getenv("TOKEN")
+INTER_CLIENT_ID = os.getenv("INTER_CLIENT_ID")
+INTER_CLIENT_SECRET = os.getenv("INTER_CLIENT_SECRET")
+INTER_CHAVE_PIX = "c2d13650-0370-42e3-a918-0cc68c457646"
+CERT = ('certs/certificado.crt', 'certs/chave_privada.key')
+
+TAXA_POR_PESSOA = 0.50
+VALORES = [0.70, 1.00, 2.00, 3.00, 5.00, 10.00, 20.00, 30.00, 50.00, 100.00, 200.00]
 
 intents = discord.Intents.all()
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-# REMOVIDO 0,20 e 0,40
-VALORES = [0.70, 1.00, 2.00, 3.00, 5.00, 10.00, 20.00, 30.00, 50.00, 100.00, 200.00]
-TAXA_POR_PESSOA = 0.50
-
 filas = {}
+pagamentos_pendentes = {}
 
 def formatar(v): return f"R$ {v:.2f}".replace('.', ',')
 
 def get_qtd_jogadores(nome_canal):
     m = re.search(r'(\d+)x\d+', nome_canal.lower())
-    if m:
-        return int(m.group(1)) * 2
+    if m: return int(m.group(1)) * 2
     return 2
 
 def get_fila(cid, valor):
@@ -26,165 +29,162 @@ def get_fila(cid, valor):
     if valor not in filas[cid]: filas[cid][valor] = {"Gelo Infinito": [], "Gelo Normal": []}
     return filas[cid][valor]
 
+def calcular_premio(valor, qtd):
+    # TAXA FIXA CORRIGIDA
+    if valor >= 30:
+        taxa = 2.50
+    else:
+        taxa = TAXA_POR_PESSOA * qtd
+
+    total = valor * qtd
+    premio = total - taxa
+    return total, premio, taxa
+
+def eh_canal_alvo(nome):
+    nome = nome.lower()
+    if "x" not in nome: return False
+    if not any(k in nome for k in ["mobile", "misto", "emulador", "emu"]): return False
+    return True
+
+def get_token_inter():
+    url = "https://cdpj.partners.bancointer.com.br/oauth/v2/token"
+    data = {'client_id': INTER_CLIENT_ID, 'client_secret': INTER_CLIENT_SECRET, 'scope': 'cob.write cob.read pix.read', 'grant_type': 'client_credentials'}
+    r = requests.post(url, data=data, cert=CERT, timeout=20)
+    r.raise_for_status()
+    return r.json()['access_token']
+
+def gerar_pix_inter(valor, nome="Jogador"):
+    token = get_token_inter()
+    txid = uuid.uuid4().hex[:26]
+    url = f"https://cdpj.partners.bancointer.com.br/pix/v2/cob/{txid}"
+    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+    payload = {"calendario": {"expiracao": 600}, "devedor": {"nome": nome[:30]}, "valor": {"original": f"{valor:.2f}"}, "chave": INTER_CHAVE_PIX, "solicitacaoPagador": f"AP {formatar(valor)}"}
+    r = requests.put(url, json=payload, headers=headers, cert=CERT, timeout=20)
+    if r.status_code not in [200, 201]: raise Exception(f"Erro Inter: {r.text}")
+    data = r.json()
+    return {"txid": txid, "copia_cola": data.get('pixCopiaECola')}
+
+def checar_pagamento(txid):
+    try:
+        token = get_token_inter()
+        url = f"https://cdpj.partners.bancointer.com.br/pix/v2/cob/{txid}"
+        headers = {"Authorization": f"Bearer {token}"}
+        r = requests.get(url, headers=headers, cert=CERT, timeout=20)
+        return r.json().get('status') == 'CONCLUIDA'
+    except: return False
+
 def build_embed_fila(channel, valor):
     f = get_fila(channel.id, valor)
     qtd = get_qtd_jogadores(channel.name)
-    emb = discord.Embed(title=f"💸 {channel.name.upper()} • {formatar(valor)}", color=0x2B2D31)
+    emb = discord.Embed(title=f"💸 {channel.name.upper()} • {formatar(valor)}", color=0xFF7A00)
     desc = ""
+    total_jogadores = 0
     for tipo in ["Gelo Infinito", "Gelo Normal"]:
         if f[tipo]:
+            total_jogadores += len(f[tipo])
             mentions = " ".join([f"<@{u.id}>" for u in f[tipo]])
             icon = "♾️" if "Infinito" in tipo else "🧊"
-            desc += f"{icon} {tipo} ({len(f[tipo])}/{qtd}): {mentions}\n"
+            desc += f"{icon} **{tipo}** ({len(f[tipo])}/{qtd}): {mentions}\n"
     if not desc:
         desc = f"👥 **Jogadores** (0/{qtd})\n`Nenhum jogador na fila.`"
     else:
-        desc = f"👥 **Jogadores**\n" + desc
+        desc = f"👥 **Jogadores** ({total_jogadores}/{qtd})\n" + desc
+    total, premio, taxa = calcular_premio(valor, qtd)
     emb.description = desc
-    emb.set_footer(text=f"🦔 {channel.name} • Entrada {formatar(valor)} • Taxa {formatar(TAXA_POR_PESSOA)}/pessoa")
+    emb.add_field(name="💰 Premiação", value=f"Total: {formatar(total)}\nPrêmio: {formatar(premio)}\nTaxa Org: {formatar(taxa)}", inline=False)
+    emb.set_footer(text=f"Taxa: R$0,50/pessoa até R$20 | R$2,50 acima de R$30")
     return emb
 
-def calcular_premio(valor, qtd_jogadores):
-    total_mesa = valor * qtd_jogadores
-    taxa_total = TAXA_POR_PESSOA * qtd_jogadores
-    premio = total_mesa - taxa_total
-    return total_mesa, premio, taxa_total
-
-class PartidaView(discord.ui.View):
-    def __init__(self, jogadores, valor, canal_origem):
-        super().__init__(timeout=600)
-        self.jogadores=jogadores; self.valor=valor; self.canal_origem=canal_origem; self.confirmados=set()
-    @discord.ui.button(label="Confirmar Partida", style=discord.ButtonStyle.green, emoji="✅")
-    async def confirmar(self, inter, btn):
-        if inter.user not in self.jogadores: return await inter.response.send_message("❌ Não é sua partida.", ephemeral=True)
-        self.confirmados.add(inter.user.id)
-        await inter.response.send_message(f"✅ {inter.user.mention} confirmou! ({len(self.confirmados)}/{len(self.jogadores)})")
-        if len(self.confirmados)==len(self.jogadores):
-            total, premio, taxa = calcular_premio(self.valor, len(self.jogadores))
-            emb=discord.Embed(title="✅ PARTIDA CONFIRMADA!", description=f"💰 Mesa: {formatar(total)}\n🏆 Prêmio: {formatar(premio)}\n💵 Taxa org ({len(self.jogadores)}x {formatar(TAXA_POR_PESSOA)}): {formatar(taxa)}\nAguardem: `!sala ID SENHA`", color=0x00FF00)
-            await inter.channel.send(content=" ".join([j.mention for j in self.jogadores]), embed=emb)
-            self.stop()
-    @discord.ui.button(label="Cancelar", style=discord.ButtonStyle.red, emoji="❌")
-    async def cancelar(self, inter, btn):
-        f=get_fila(self.canal_origem.id, self.valor)
-        for t in f:
-            for u in self.jogadores:
-                if u in f[t]: f[t].remove(u)
-        await inter.response.send_message("❌ Cancelada.")
-        try: await inter.channel.delete()
-        except: pass
-        self.stop()
-
 class FilaView(discord.ui.View):
-    def __init__(self, cid, valor):
-        super().__init__(timeout=None); self.cid=cid; self.valor=valor
-    @discord.ui.button(label="Gelo Infinito", style=discord.ButtonStyle.secondary, emoji="♾️")
-    async def infinito(self, i, b): await self.entrar(i, "Gelo Infinito")
-    @discord.ui.button(label="Gelo Normal", style=discord.ButtonStyle.secondary, emoji="🧊")
-    async def normal(self, i, b): await self.entrar(i, "Gelo Normal")
-    @discord.ui.button(label="Sair", style=discord.ButtonStyle.red, emoji="↩️")
-    async def sair(self, i, b):
-        f=get_fila(self.cid, self.valor)
-        for t in f:
-            if i.user in f[t]: f[t].remove(i.user)
-        await i.response.defer(ephemeral=True)
-        await atualizar_uma_fila(i.guild.get_channel(self.cid), self.valor)
-        await i.followup.send("Saiu.", ephemeral=True)
-    async def entrar(self, inter, tipo):
-        await inter.response.defer(ephemeral=True)
-        f=get_fila(self.cid, self.valor)
-        canal = inter.guild.get_channel(self.cid)
-        qtd_needed = get_qtd_jogadores(canal.name)
-        for t in f:
-            if inter.user in f[t]: f[t].remove(inter.user)
-        f[tipo].append(inter.user)
-        if len(f[tipo]) >= qtd_needed:
-            jogadores = f[tipo][:qtd_needed]
-            f[tipo]=f[tipo][qtd_needed:]
-            await atualizar_uma_fila(canal, self.valor)
-            await criar_partida(canal, jogadores, self.valor, tipo)
-            await inter.followup.send(f"🔥 Partida encontrada! {canal.mention}", ephemeral=True)
-        else:
-            await atualizar_uma_fila(canal, self.valor)
-            await inter.followup.send(f"✅ Entrou: {formatar(self.valor)} - {tipo} ({len(f[tipo])}/{qtd_needed})", ephemeral=True)
+    def __init__(self, valor, canal_id):
+        super().__init__(timeout=None)
+        self.valor = valor
+        self.canal_id = canal_id
+    async def entrar_fila(self, interaction, tipo):
+        await interaction.response.defer(ephemeral=True)
+        fila = get_fila(self.canal_id, self.valor)
+        for t in fila:
+            if interaction.user in fila[t]:
+                await interaction.followup.send(f"❌ Você já está na fila do {t}", ephemeral=True)
+                return
+        try:
+            pix = gerar_pix_inter(self.valor, interaction.user.display_name)
+        except Exception as e:
+            await interaction.followup.send(f"❌ Erro: {e}", ephemeral=True)
+            return
+        pagamentos_pendentes[pix['txid']] = {"user_id": interaction.user.id, "valor": self.valor, "canal_id": self.canal_id, "tipo": tipo, "expira": datetime.now() + timedelta(seconds=600)}
+        embed_pix = discord.Embed(title="💳 Pague para entrar", color=0x00FF88, description=f"**Valor:** {formatar(self.valor)}\n**Pix Copia e Cola:**\n```{pix['copia_cola']}```")
+        try:
+            await interaction.user.send(embed=embed_pix)
+            await interaction.followup.send(f"✅ Pix gerado! Enviei no privado.", ephemeral=True)
+        except:
+            await interaction.followup.send(embed=embed_pix, ephemeral=True)
+        bot.loop.create_task(self.aguardar_pagamento(pix['txid'], interaction.user))
+    async def aguardar_pagamento(self, txid, user):
+        for _ in range(60):
+            await asyncio.sleep(5)
+            if txid not in pagamentos_pendentes: return
+            if checar_pagamento(txid):
+                info = pagamentos_pendentes.pop(txid)
+                fila = get_fila(info['canal_id'], info['valor'])
+                canal = bot.get_channel(info['canal_id'])
+                if not canal: return
+                fila[info['tipo']].append(user)
+                for msg in [m async for m in canal.history(limit=20)]:
+                    if msg.author == bot.user and msg.embeds and "Jogadores" in str(msg.embeds[0].description):
+                        await msg.edit(embed=build_embed_fila(canal, info['valor']), view=FilaView(info['valor'], info['canal_id']))
+                        break
+                qtd = get_qtd_jogadores(canal.name)
+                if len(fila[info['tipo']]) >= qtd:
+                    await criar_partida(canal, info['valor'], info['tipo'])
+                return
+        pagamentos_pendentes.pop(txid, None)
+    @discord.ui.button(label="♾️ Gelo Infinito", style=discord.ButtonStyle.primary)
+    async def btn_infinito(self, interaction: discord.ui.Interaction, button: discord.ui.Button):
+        await self.entrar_fila(interaction, "Gelo Infinito")
+    @discord.ui.button(label="🧊 Gelo Normal", style=discord.ButtonStyle.secondary)
+    async def btn_normal(self, interaction: discord.ui.Interaction, button: discord.ui.Button):
+        await self.entrar_fila(interaction, "Gelo Normal")
 
-async def atualizar_uma_fila(channel, valor):
-    if not channel: return
-    emb=build_embed_fila(channel, valor)
-    view=FilaView(channel.id, valor)
-    async for msg in channel.history(limit=200):
-        if msg.author==bot.user and msg.embeds and formatar(valor) in msg.embeds[0].title:
-            try: await msg.edit(embed=emb, view=view); return
-            except: pass
-    await channel.send(embed=emb, view=view)
-
-async def criar_partida(canal_origem, jogadores, valor, tipo):
-    guild=canal_origem.guild
+async def criar_partida(channel, valor, tipo):
+    fila = get_fila(channel.id, valor)
+    jogadores = fila[tipo][:get_qtd_jogadores(channel.name)]
+    fila[tipo] = fila[tipo][get_qtd_jogadores(channel.name):]
     total, premio, taxa = calcular_premio(valor, len(jogadores))
-    try:
-        thread=await canal_origem.create_thread(name=f"partida-{random.randint(35130,35500)}", type=discord.ChannelType.private_thread, auto_archive_duration=60)
-        for j in jogadores:
-            try: await thread.add_user(j)
-            except: pass
-        canal=thread
-    except:
-        overwrites={guild.default_role: discord.PermissionOverwrite(view_channel=False), guild.me: discord.PermissionOverwrite(view_channel=True, send_messages=True)}
-        for j in jogadores: overwrites[j]=discord.PermissionOverwrite(view_channel=True, send_messages=True)
-        canal=await guild.create_text_channel(f"partida-{random.randint(35130,35500)}", overwrites=overwrites, category=canal_origem.category)
-    lista = "\n".join([f"{i+1}. {j.mention}" for i,j in enumerate(jogadores)])
-    emb=discord.Embed(description=f"{' '.join([j.mention for j in jogadores])}\n\n**⏳ Aguardando**\n{canal_origem.name.upper()} {tipo} {formatar(valor)}\n\n**👥 Jogadores**\n{lista}", color=0x2B2D31)
-    info=discord.Embed(description=f"💰 **APOSTADO {formatar(valor)}**\n\n🏦 **Mesa:** {formatar(total)} ({len(jogadores)}x {formatar(valor)})\n💵 **Taxa org:** {formatar(taxa)} ({len(jogadores)}x {formatar(TAXA_POR_PESSOA)})\n🏆 **Prêmio vencedor:** {formatar(premio)}\n\n📄 Full Mobile\n⚔️ 1ª Full Desert / Full UMP e XM8", color=0x2B2D31)
-    await canal.send(content=" ".join([j.mention for j in jogadores]), embed=emb, view=PartidaView(jogadores, valor, canal_origem))
-    await canal.send(embed=info)
-
-def eh_canal_alvo(nome):
-    nome=nome.lower()
-    if "x" not in nome: return False
-    if not any(k in nome for k in ["mobile", "misto", "emulador"]): return False
-    return True
+    embed = discord.Embed(title=f"🎮 Partida - {channel.name}", color=0x2B2D31, description=f"**Tipo:** {tipo}\n**Prêmio:** {formatar(premio)}")
+    mentions = " ".join([f"<@{u.id}>" for u in jogadores])
+    embed.add_field(name="Jogadores", value=mentions)
+    await channel.send(content=mentions, embed=embed)
+    for msg in [m async for m in channel.history(limit=20)]:
+        if msg.author == bot.user and msg.embeds and "Jogadores" in str(msg.embeds[0].description):
+            await msg.edit(embed=build_embed_fila(channel, valor), view=FilaView(valor, channel.id))
+            break
 
 @bot.event
-async def on_ready():
-    print(f"ON {bot.user}")
-    for g in bot.guilds:
-        for ch in g.text_channels:
-            if eh_canal_alvo(ch.name):
-                for v in VALORES:
-                    bot.add_view(FilaView(ch.id, v))
+async def on_ready(): print(f"LOGADO {bot.user}")
+
+@bot.command()
+async def fila(ctx, valor: float = None):
+    if valor is None:
+        for v in VALORES:
+            if eh_canal_alvo(ctx.channel.name):
+                embed = build_embed_fila(ctx.channel, v)
+                await ctx.channel.send(embed=embed, view=FilaView(v, ctx.channel.id))
+        return
+    embed = build_embed_fila(ctx.channel, valor)
+    await ctx.send(embed=embed, view=FilaView(valor, ctx.channel.id))
 
 @bot.command()
 async def reset_total(ctx, filtro: str = "x"):
-    if not ctx.author.guild_permissions.administrator: return
-    filtro=filtro.lower()
-    canais_para_resetar=[]
-    for ch in ctx.guild.text_channels:
-        if not eh_canal_alvo(ch.name): continue
-        if filtro=="x": canais_para_resetar.append(ch)
-        elif filtro in ch.name.lower(): canais_para_resetar.append(ch)
-    if not canais_para_resetar:
-        return await ctx.send(f"❌ Nenhum canal com X e filtro `{filtro}`.")
-    await ctx.send(f"🧹 Limpando {len(canais_para_resetar)} canais ({filtro.upper()}) - Só os com X...")
-    for ch in canais_para_resetar:
-        async for m in ch.history(limit=300):
-            if m.author==bot.user:
-                try: await m.delete()
-                except: pass
-        for t in ch.threads:
-            if "partida-" in t.name:
-                try: await t.delete()
-                except: pass
-    await asyncio.sleep(1)
-    for ch in canais_para_resetar:
-        for v in sorted(VALORES):
-            await ch.send(embed=build_embed_fila(ch, v), view=FilaView(ch.id, v))
-            await asyncio.sleep(0.25)
-    await ctx.send(f"✅ Pronto! {len(canais_para_resetar)} canais resetados sem R$ 0,20 e R$ 0,40. Taxa: {formatar(TAXA_POR_PESSOA)}/pessoa.")
-
-@bot.command()
-async def setup_tudo(ctx, filtro="x"): await reset_total(ctx, filtro)
-@bot.command()
-async def sala(ctx, id_sala: str, senha: str):
-    if ctx.author.guild_permissions.manage_messages:
-        await ctx.send(f"@here **🏠 SALA LIBERADA!**\nID: `{id_sala}`\nSENHA: `{senha}`")
+    if not ctx.author.guild_permissions.administrator: return await ctx.send("❌ Sem permissão")
+    apagadas = 0
+    for canal in ctx.guild.text_channels:
+        if filtro.lower() in canal.name.lower() and eh_canal_alvo(canal.name):
+            async for msg in canal.history(limit=100):
+                if msg.author == bot.user:
+                    try: await msg.delete(); apagadas += 1
+                    except: pass
+            filas.pop(canal.id, None)
+    await ctx.send(f"✅ Reset {apagadas} msgs.")
 
 bot.run(TOKEN)
