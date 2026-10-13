@@ -137,8 +137,10 @@ async def criar_partida(canal_origem, jogadores, valor, tipo):
     nome = f"partida-{id_partida}"
 
     # Calculo do premio - sobe junto com o preço
-    premio_kill = valor  # 1 kill = o valor da entrada
-    premio_total = valor * 10 # Booyah + 5 kills = 10x o valor
+    TAXA_ORG = 0.20 # 20% pra org
+premio_kill = valor * (1 - TAXA_ORG) # paga 80%
+premio_total = premio_kill * 10 # Booyah + 5 kills
+lucro_org = valor * TAXA_ORG
 
     try:
         thread = await canal_origem.create_thread(name=nome, type=discord.ChannelType.private_thread, auto_archive_duration=60)
