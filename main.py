@@ -7,8 +7,9 @@ TOKEN = os.getenv("DISCORD_TOKEN") or os.getenv("TOKEN")
 intents = discord.Intents.all()
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-VALORES = [0.20, 0.40, 0.70, 1.00, 2.00, 3.00, 5.00, 10.00, 20.00, 30.00, 50.00, 100.00, 200.00]
-TAXA_POR_PESSOA = 0.50 # R$ 0,50 DE CADA PESSOA
+# REMOVIDO 0,20 e 0,40
+VALORES = [0.70, 1.00, 2.00, 3.00, 5.00, 10.00, 20.00, 30.00, 50.00, 100.00, 200.00]
+TAXA_POR_PESSOA = 0.50
 
 filas = {}
 
@@ -17,7 +18,7 @@ def formatar(v): return f"R$ {v:.2f}".replace('.', ',')
 def get_qtd_jogadores(nome_canal):
     m = re.search(r'(\d+)x\d+', nome_canal.lower())
     if m:
-        return int(m.group(1)) * 2 # 1x1=2, 2x2=4, 3x3=6, 4x4=8
+        return int(m.group(1)) * 2
     return 2
 
 def get_fila(cid, valor):
@@ -45,13 +46,8 @@ def build_embed_fila(channel, valor):
 
 def calcular_premio(valor, qtd_jogadores):
     total_mesa = valor * qtd_jogadores
-    # Se o valor for menor que a taxa, deixa isento pra não ficar negativo
-    if valor <= TAXA_POR_PESSOA:
-        taxa_total = 0
-        premio = total_mesa
-    else:
-        taxa_total = TAXA_POR_PESSOA * qtd_jogadores
-        premio = total_mesa - taxa_total
+    taxa_total = TAXA_POR_PESSOA * qtd_jogadores
+    premio = total_mesa - taxa_total
     return total_mesa, premio, taxa_total
 
 class PartidaView(discord.ui.View):
@@ -182,7 +178,7 @@ async def reset_total(ctx, filtro: str = "x"):
         for v in sorted(VALORES):
             await ch.send(embed=build_embed_fila(ch, v), view=FilaView(ch.id, v))
             await asyncio.sleep(0.25)
-    await ctx.send(f"✅ Pronto! {len(canais_para_resetar)} canais resetados. Taxa: {formatar(TAXA_POR_PESSOA)} por pessoa.")
+    await ctx.send(f"✅ Pronto! {len(canais_para_resetar)} canais resetados sem R$ 0,20 e R$ 0,40. Taxa: {formatar(TAXA_POR_PESSOA)}/pessoa.")
 
 @bot.command()
 async def setup_tudo(ctx, filtro="x"): await reset_total(ctx, filtro)
