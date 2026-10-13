@@ -6,7 +6,7 @@ TOKEN = os.getenv("DISCORD_TOKEN") or os.getenv("TOKEN")
 intents = discord.Intents.all()
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-VALORES = [2.00, 3.00, 5.00, 5.50, 10.00, 20.00, 30.00, 50.00] # coloca os que você usa
+VALORES = [0.20, 0.40, 0.70, 1.00, 2.00, 3.00, 5.00, 10.00, 20.00, 30.00, 50.00, 100.00, 200.00] # coloca os que você usa
 filas = {}
 partidas_confirm = {}
 
