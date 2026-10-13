@@ -2,16 +2,17 @@ import discord, os, re, asyncio
 from discord.ext import commands
 
 TOKEN = os.getenv("DISCORD_TOKEN") or os.getenv("TOKEN")
-VALORES = [0.70, 1.00, 2.00, 3.00, 5.00, 7.00, 10.00, 15.00, 20.00, 50.00, 100.00, 200.00]
-TAXA_FIXA = 0.50
+VALORES = [0.70, 1.00, 2.00, 3.00, 5.00, 7.00, 10.00, 15.00, 20.00, 30.00, 50.00, 100.00, 200.00]
 PIX_KEY = "c2d13650-0370-42e3-a918-0cc68c457646"
 CATEGORIA_PARTIDAS = "PARTIDAS"
+CATEGORIA_TICKETS = "TICKETS"
 
 intents = discord.Intents.all()
 bot = commands.Bot(command_prefix="!", intents=intents)
 filas = {}
 
 def formatar(v): return f"R$ {v:.2f}".replace('.', ',')
+def get_taxa(valor): return 2.50 if valor >= 30 else 0.50
 def formatar_titulo(n):
     n = n.lower().replace("🦔","").replace("•","").strip().replace("-", " ").replace("x", "v")
     return n.title().replace("V", "v")
@@ -33,8 +34,13 @@ def get_fila(cid, valor, nome_canal):
         else:
             filas[cid][valor] = {"Gelo Infinito": [], "Gelo Normal": []}
     return filas[cid][valor]
-def eh_canal_alvo(nome): return "x" in nome.lower()
+def eh_canal_alvo(nome):
+    n = nome.lower()
+    if "exposed" in n or "suporte" in n or "ticket" in n or "bem-vindo" in n:
+        return False
+    return bool(re.search(r'\d+x\d+', n))
 
+# ========== SISTEMA DE FILA ==========
 def build_embed_fila(channel, valor):
     f = get_fila(channel.id, valor, channel.name)
     titulo = f"{formatar_titulo(channel.name)} • {formatar(valor)}"
@@ -51,7 +57,6 @@ def build_embed_fila(channel, valor):
         emb.description = desc.strip()
     return emb
 
-# CORREÇÃO DO BUG DO R$ 50 DUPLICADO
 async def achar_e_editar(canal, valor, nome_canal):
     alvo = formatar(valor)
     async for msg in canal.history(limit=150):
@@ -68,25 +73,22 @@ async def criar_canal_partida(guild, jogadores, valor, tipo_fila, canal_origem_n
     categoria = discord.utils.get(guild.categories, name=CATEGORIA_PARTIDAS)
     if not categoria:
         categoria = await guild.create_category(CATEGORIA_PARTIDAS)
-
     overwrites = {
         guild.default_role: discord.PermissionOverwrite(view_channel=False),
         guild.me: discord.PermissionOverwrite(view_channel=True, send_messages=True, manage_channels=True)
     }
     for jogador in jogadores:
         overwrites[jogador] = discord.PermissionOverwrite(view_channel=True, send_messages=True, read_message_history=True)
-
-    total = valor + TAXA_FIXA
+    taxa = get_taxa(valor)
+    total = valor + taxa
     nome_canal_priv = f"ap-{formatar(valor).replace('R$ ','').replace(',','-')}-{tipo_fila.lower().replace(' ','')}-{jogadores[0].name[:5]}".lower()[:30]
-
     canal_priv = await guild.create_text_channel(nome_canal_priv, category=categoria, overwrites=overwrites)
-
     emb = discord.Embed(
         title=f"💰 Partida Criada - {formatar_titulo(canal_origem_nome)}",
         color=0x00FF88,
         description=(
             f"**Valor do AP:** {formatar(valor)}\n"
-            f"**Taxa:** {formatar(TAXA_FIXA)}\n"
+            f"**Taxa:** {formatar(taxa)}\n"
             f"**Total a pagar:** **{formatar(total)}**\n"
             f"**PIX:** `{PIX_KEY}`\n\n"
             f"**Tipo:** {tipo_fila}\n"
@@ -94,14 +96,13 @@ async def criar_canal_partida(guild, jogadores, valor, tipo_fila, canal_origem_n
             f"Copia a chave pix e pague para liberar! 🎮"
         )
     )
-    view = FecharView()
+    view = FecharPartidaView()
     mentions = " ".join([f"<@{j.id}>" for j in jogadores])
     await canal_priv.send(content=f"{mentions} sua partida começou!", embed=emb, view=view)
     return canal_priv
 
-class FecharView(discord.ui.View):
-    def __init__(self):
-        super().__init__(timeout=None)
+class FecharPartidaView(discord.ui.View):
+    def __init__(self): super().__init__(timeout=None)
     @discord.ui.button(label="Fechar Partida", style=discord.ButtonStyle.danger, emoji="🔒")
     async def fechar(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_message("Fechando em 5s...")
@@ -178,8 +179,60 @@ class SairButton(discord.ui.Button):
         await interaction.response.defer()
         await achar_e_editar(canal, self.valor, self.nome_canal)
 
+# ========== SISTEMA DE TICKET NOVO ==========
+class AbrirTicketButton(discord.ui.Button):
+    def __init__(self):
+        super().__init__(label="Abrir Ticket", style=discord.ButtonStyle.primary, emoji="🎫")
+    async def callback(self, interaction: discord.Interaction):
+        guild = interaction.guild
+        categoria = discord.utils.get(guild.categories, name=CATEGORIA_TICKETS)
+        if not categoria:
+            categoria = await guild.create_category(CATEGORIA_TICKETS)
+        # verifica se já tem ticket aberto
+        for ch in categoria.text_channels:
+            if f"ticket-{interaction.user.name.lower()[:10]}" in ch.name.lower() or str(interaction.user.id) in ch.topic if ch.topic else False:
+                return await interaction.response.send_message(f"❌ Você já tem um ticket aberto: {ch.mention}", ephemeral=True)
+
+        overwrites = {
+            guild.default_role: discord.PermissionOverwrite(view_channel=False),
+            guild.me: discord.PermissionOverwrite(view_channel=True, send_messages=True, manage_channels=True),
+            interaction.user: discord.PermissionOverwrite(view_channel=True, send_messages=True, read_message_history=True)
+        }
+        # dá permissão pra quem tem cargo de Staff/Adm ver também
+        for role in guild.roles:
+            if "staff" in role.name.lower() or "adm" in role.name.lower() or "mod" in role.name.lower() or "suporte" in role.name.lower():
+                overwrites[role] = discord.PermissionOverwrite(view_channel=True, send_messages=True)
+
+        canal = await guild.create_text_channel(f"ticket-{interaction.user.name}", category=categoria, topic=str(interaction.user.id), overwrites=overwrites)
+        emb = discord.Embed(
+            title="📢 SUPORTE ORG SLUSH",
+            description=f"Olá {interaction.user.mention}, seu ticket foi criado!\n\n**PIX da Org:** `{PIX_KEY}`\n\nDescreva seu problema que um staff vai te atender.\nPara fechar clique no botão abaixo.",
+            color=0x00FF88
+        )
+        await canal.send(content=f"{interaction.user.mention}", embed=emb, view=FecharTicketView())
+        await interaction.response.send_message(f"✅ Ticket criado: {canal.mention}", ephemeral=True)
+
+class TicketView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+        self.add_item(AbrirTicketButton())
+
+class FecharTicketView(discord.ui.View):
+    def __init__(self): super().__init__(timeout=None)
+    @discord.ui.button(label="Fechar Ticket", style=discord.ButtonStyle.danger, emoji="🔒")
+    async def fechar(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_message("Fechando em 5s...")
+        await asyncio.sleep(5)
+        try: await interaction.channel.delete()
+        except: pass
+
 @bot.event
-async def on_ready(): print(f"ON {bot.user}")
+async def on_ready():
+    print(f"ON {bot.user}")
+    bot.add_view(TicketView())
+    bot.add_view(FecharTicketView())
+    bot.add_view(FecharPartidaView())
+
 @bot.command()
 async def fila(ctx):
     total=0
@@ -188,7 +241,18 @@ async def fila(ctx):
             for v in VALORES:
                 await canal.send(embed=build_embed_fila(canal, v), view=FilaView(v, canal.id, canal.name))
                 total+=1
-    await ctx.send(f"✅ {total} fileiras!")
+    await ctx.send(f"✅ {total} fileiras criadas!")
+
+@bot.command()
+async def suporte(ctx):
+    """Manda o painel de ticket no canal de suporte"""
+    emb = discord.Embed(
+        title="📢 SUPORTE ORG SLUSH",
+        description="Clique abaixo para abrir ticket privado.",
+        color=0x5865F2
+    )
+    await ctx.send(embed=emb, view=TicketView())
+
 @bot.command()
 async def reset_total(ctx):
     if not ctx.author.guild_permissions.administrator: return
@@ -201,4 +265,5 @@ async def reset_total(ctx):
                     except: pass
             filas.pop(canal.id, None)
     await ctx.send(f"✅ Reset {apag} msgs. Use `!fila`")
+
 bot.run(TOKEN)
