@@ -116,5 +116,34 @@ async def painel_aqui(ctx):
 @bot.event
 async def on_ready():
     print(f"ORG SLUSH VERDE ON")
+@bot.command()
+@commands.has_permissions(manage_messages=True)
+async def limpar(ctx):
+    await ctx.channel.purge(limit=100)
+    emb = discord.Embed(
+        title="🦔 ORG SLUSH - LIMPEZA",
+        description="Canal limpo com sucesso!",
+        color=VERDE
+    )
+    await ctx.send(embed=emb, delete_after=5)
 
+@bot.command()
+@commands.has_permissions(manage_messages=True)
+async def limpar_todos(ctx):
+    # Limpa os 11 canais com 🦔 de uma vez
+    await ctx.send("🦔 Limpando todos os canais ORG SLUSH...")
+    for nome_canal in CANAIS_SLUSH:
+        canal = discord.utils.get(ctx.guild.channels, name=nome_canal)
+        if canal:
+            try:
+                await canal.purge(limit=100)
+            except:
+                pass
+    await ctx.send("✅ Todos os canais limpos!")
+
+@limpar.error
+async def limpar_error(ctx, error):
+    if isinstance(error, commands.MissingPermissions):
+        await ctx.send("Você precisa de permissão de ADM pra limpar, menor.")
+        
 bot.run(TOKEN)
