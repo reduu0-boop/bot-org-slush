@@ -1,6 +1,7 @@
 import discord
 from discord.ext import commands
-import os, json, random
+import os
+import json
 
 TOKEN = os.getenv("DISCORD_TOKEN")
 VERDE = 0x00FF7F
@@ -26,50 +27,40 @@ def get_taxa(v):
     return 0.50 if v <= 30 else 2.50
 
 def load_json(arq):
-    if not os.path.exists(arq): return {}
+    if not os.path.exists(arq):
+        return {}
     try:
-        import json; return json.load(open(arq))
-    except: return {}
-def save_json(arq,data):
-    import json; json.dump(data, open(arq,"w"))
+        with open(arq, "r") as f:
+            return json.load(f)
+    except:
+        return {}
+
+def save_json(arq, data):
+    with open(arq, "w") as f:
+        json.dump(data, f)
 
 intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
+# --- VIEW COM BOTÃO IGUAL DA REFERÊNCIA ---
 class FilaView(discord.ui.View):
     def __init__(self, canal_nome, valor_str):
         super().__init__(timeout=None)
         self.canal_nome = canal_nome
         self.valor_str = valor_str
+
     @discord.ui.button(label="Entrar", style=discord.ButtonStyle.success)
     async def entrar(self, inter, btn):
         filas = load_json(ARQ_FILA)
         chave = f"{self.canal_nome}_{self.valor_str}"
-        if chave not in filas: filas[chave]=[]
+        if chave not in filas:
+            filas[chave] = []
         if inter.user.id not in filas[chave]:
             filas[chave].append(inter.user.id)
             save_json(ARQ_FILA, filas)
-            await inter.response.send_message(f"Entrou na fila {self.canal_nome} R$ {self.valor_str} ORG SLUSH", ephemeral=True)
-            # pega qtd necessária: 1x1=2, 2x2=4, 3x3=6, 4x4=8
-            modo = self.canal_nome.split("・")[1].split("-")[0] # 1x1
-            q = int(modo[0]) * 2
-            if len(filas[chave]) >= q:
-                # cria partida
-                v=float(self.valor_str.replace(",","."))
-                taxa=get_taxa(v)
-                total=v+taxa
-                premio=v*q
-                ch = inter.channel
-                emb = discord.Embed(
-                    title=f"ORG SLUSH - {self.canal_nome} R$ {self.valor_str}",
-                    description=f"AP: R$ {v:.2f}\nTAXA: R$ {taxa:.2f}\nPAGAR: R$ {total:.2f}\nPREMIO: R$ {premio:.2f}",
-                    color=VERDE
-                )
-                await ch.send(f"Partida fechou! {' '.join([f'<@{id}>' for id in filas[chave][:q]])}", embed=emb)
-                filas[chave]=filas[chave][q:]
-                save_json(ARQ_FILA, filas)
+            await inter.response.send_message(f"Entrou na fila R$ {self.valor_str}", ephemeral=True)
         else:
             await inter.response.send_message("Já está na fila", ephemeral=True)
 
@@ -80,58 +71,44 @@ class FilaView(discord.ui.View):
         if chave in filas and inter.user.id in filas[chave]:
             filas[chave].remove(inter.user.id)
             save_json(ARQ_FILA, filas)
-        await inter.response.send_message("Saiu", ephemeral=True)
+        await inter.response.send_message("Saiu da fila", ephemeral=True)
 
+# --- PAINEIS LIMPOS ---
 @bot.command()
 async def painel_todos(ctx):
-    # Use esse comando no canal certo ou ele vai criar em todos de uma vez
     for nome_canal in CANAIS_SLUSH:
         canal = discord.utils.get(ctx.guild.channels, name=nome_canal)
         if not canal:
             continue
         for valor in VALORES:
-            v=float(valor.replace(",","."))
-            taxa=get_taxa(v)
-            emb=discord.Embed(
-                title=f"{nome_canal} - R$ {valor}",
-                description=f"Jogadores: Nenhum na fila\n\n💸 Pagar: R$ {v+taxa:.2f} (AP R$ {v:.2f} + Taxa R$ {taxa:.2f})\n🏆 Premio total: R$ {v*2:.2f} por time vencedor\n🦔 ORG SLUSH",
+            emb = discord.Embed(
+                title=f"• {nome_canal.split('・')[1]} - R$ {valor}",
+                description="Jogadores: Nenhum na fila",
                 color=VERDE
             )
             await canal.send(embed=emb, view=FilaView(nome_canal, valor))
 
 @bot.command()
 async def painel_aqui(ctx):
-    # Cria só no canal onde você digitou
     nome_canal = ctx.channel.name
     for valor in VALORES:
-        v=float(valor.replace(",","."))
-        taxa=get_taxa(v)
-        emb=discord.Embed(
-            title=f"{nome_canal} - R$ {valor}",
-            description=f"Jogadores: Nenhum na fila\n\n💸 Pagar: R$ {v+taxa:.2f}\n🏆 Ganha: R$ {v*2:.2f}\nTaxa ORG SLUSH: R$ {taxa:.2f}",
+        emb = discord.Embed(
+            title=f"• {nome_canal.split('・')[1]} - R$ {valor}",
+            description="Jogadores: Nenhum na fila",
             color=VERDE
         )
         await ctx.send(embed=emb, view=FilaView(nome_canal, valor))
 
-@bot.event
-async def on_ready():
-    print(f"ORG SLUSH VERDE ON")
+# --- LIMPEZA ---
 @bot.command()
 @commands.has_permissions(manage_messages=True)
 async def limpar(ctx):
     await ctx.channel.purge(limit=100)
-    emb = discord.Embed(
-        title="🦔 ORG SLUSH - LIMPEZA",
-        description="Canal limpo com sucesso!",
-        color=VERDE
-    )
-    await ctx.send(embed=emb, delete_after=5)
 
 @bot.command()
 @commands.has_permissions(manage_messages=True)
 async def limpar_todos(ctx):
-    # Limpa os 11 canais com 🦔 de uma vez
-    await ctx.send("🦔 Limpando todos os canais ORG SLUSH...")
+    await ctx.send("Limpando todos os canais...")
     for nome_canal in CANAIS_SLUSH:
         canal = discord.utils.get(ctx.guild.channels, name=nome_canal)
         if canal:
@@ -139,11 +116,10 @@ async def limpar_todos(ctx):
                 await canal.purge(limit=100)
             except:
                 pass
-    await ctx.send("✅ Todos os canais limpos!")
+    await ctx.send("Todos limpos!")
 
-@limpar.error
-async def limpar_error(ctx, error):
-    if isinstance(error, commands.MissingPermissions):
-        await ctx.send("Você precisa de permissão de ADM pra limpar, menor.")
-        
+@bot.event
+async def on_ready():
+    print(f"ORG SLUSH VERDE ON - {bot.user}")
+
 bot.run(TOKEN)
