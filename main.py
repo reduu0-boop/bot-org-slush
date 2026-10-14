@@ -9,39 +9,39 @@ BLACKLIST_FILE = "blacklist.json"
 AP_FILE = "ap_data.json"
 FILA_FILE = "filas.json"
 
-# Canais que vão ser limpos e virar fila
-CANAIS_FILA = [
-    "1x1-mobile", "2x2-mobile", "3x3-mobile", "4x4-mobile",
-    "2x2-misto", "3x3-misto", "4x4-misto",
-    "1x1-emulador", "2x2-emulador", "3x3-emulador", "4x4-emulador"
-]
-
 def load_bl():
     if not os.path.exists(BLACKLIST_FILE): return {}
-    with open(BLACKLIST_FILE, "r") as f: return json.load(f)
+    try:
+        with open(BLACKLIST_FILE, "r") as f: return json.load(f)
+    except: return {}
 def save_bl(data):
     with open(BLACKLIST_FILE, "w") as f: json.dump(data, f, indent=4)
 
 def load_ap():
     if not os.path.exists(AP_FILE): return {}
-    with open(AP_FILE, "r") as f: return json.load(f)
+    try:
+        with open(AP_FILE, "r") as f: return json.load(f)
+    except: return {}
 def save_ap(data):
     with open(AP_FILE, "w") as f: json.dump(data, f, indent=4)
 
 def load_filas():
     if not os.path.exists(FILA_FILE): return {}
-    with open(FILA_FILE, "r") as f: return json.load(f)
+    try:
+        with open(FILA_FILE, "r") as f: return json.load(f)
+    except: return {}
 def save_filas(data):
     with open(FILA_FILE, "w") as f: json.dump(data, f, indent=4)
 
 def qtd_necessaria(nome_canal):
-    if "1x1" in nome_canal: return 2
-    if "2x2" in nome_canal: return 4
-    if "3x3" in nome_canal: return 6
-    if "4x4" in nome_canal: return 8
+    nome = nome_canal.lower()
+    if "1x1" in nome: return 2
+    if "2x2" in nome: return 4
+    if "3x3" in nome: return 6
+    if "4x4" in nome: return 8
     return 2
 
-# ===== BLACKLIST MODAIS =====
+# ===== BLACKLIST =====
 class ConsultarIDModal(discord.ui.Modal, title="Consultar ID na Blacklist"):
     id_input = discord.ui.TextInput(label="Digite o ID", placeholder="Ex: 123456789")
     async def on_submit(self, interaction: discord.Interaction):
@@ -104,33 +104,25 @@ class FilaView(discord.ui.View):
             await interaction.response.send_message("Você nem está na fila.", ephemeral=True)
 
     async def entrar_fila(self, interaction: discord.Interaction, tipo):
-        # CHECA BLACKLIST
         bl = load_bl()
         if str(interaction.user.id) in bl:
-            await interaction.response.send_message(f"⛔ Você está na blacklist! Motivo: {bl[str(interaction.user.id)]['motivo']}", ephemeral=True)
+            await interaction.response.send_message(f"⛔ Você está na blacklist!", ephemeral=True)
             return
-
         filas = load_filas()
         canal_id = str(interaction.channel.id)
         lista = filas.get(canal_id, [])
-
         if str(interaction.user.id) in lista:
             await interaction.response.send_message("Você já está na fila!", ephemeral=True)
             return
-
         lista.append(str(interaction.user.id))
         filas[canal_id] = lista
         save_filas(filas)
-
-        await interaction.response.send_message(f"✅ Entrou na fila [{tipo}]! Posição: {len(lista)}", ephemeral=True)
+        await interaction.response.send_message(f"✅ Entrou na fila [{tipo}]!", ephemeral=True)
         await self.atualizar_embed(interaction.channel)
-
-        # Se fila lotou
         necessario = qtd_necessaria(interaction.channel.name)
         if len(lista) >= necessario:
             mencoes = " ".join([f"<@{uid}>" for uid in lista[:necessario]])
-            await interaction.channel.send(f"🔥 **FILA FECHOU!** {mencoes}\nModo: {tipo}\nPartida de {interaction.channel.name} vai começar! ( {necessario} jogadores )")
-            # Limpa quem entrou
+            await interaction.channel.send(f"🔥 **FILA FECHOU!** {mencoes}\nModo: {tipo} - {interaction.channel.name}")
             filas[canal_id] = lista[necessario:]
             save_filas(filas)
             await self.atualizar_embed(interaction.channel)
@@ -139,22 +131,16 @@ class FilaView(discord.ui.View):
         filas = load_filas()
         lista = filas.get(str(canal.id), [])
         necessario = qtd_necessaria(canal.name)
-
         embed = discord.Embed(
             title=f"🎮 FILA - {canal.name.upper()}",
-            description=f"**Jogadores na fila: {len(lista)}/{necessario}**\n\n" +
-            ("\n".join([f"{i+1}. <@{uid}>" for i, uid in enumerate(lista)]) if lista else "*Fila vazia - clique para entrar*"),
+            description=f"**Jogadores na fila: {len(lista)}/{necessario}**\n\n" + ("\n".join([f"{i+1}. <@{uid}>" for i, uid in enumerate(lista)]) if lista else "*Fila vazia - clique para entrar*"),
             color=0x2b2d31
         )
-        embed.set_footer(text="Blacklist ativa - jogadores banidos não entram")
-
-        # Tenta editar a última mensagem do bot, se não conseguir só manda info
         try:
-            async for msg in canal.history(limit=10):
-                if msg.author == canal.guild.me and msg.embeds:
-                    if "FILA -" in msg.embeds[0].title:
-                        await msg.edit(embed=embed, view=FilaView())
-                        return
+            async for msg in canal.history(limit=20):
+                if msg.author == canal.guild.me and msg.embeds and "FILA -" in msg.embeds[0].title:
+                    await msg.edit(embed=embed, view=FilaView())
+                    return
         except: pass
 
 # ===== AP VIEW =====
@@ -191,25 +177,21 @@ async def on_ready():
 
 async def limpar_e_criar_fila(canal):
     try:
-        # Limpa tudo
         await canal.purge(limit=100)
-        await asyncio.sleep(1)
+        await asyncio.sleep(0.5)
         await canal.purge(limit=100)
-
         necessario = qtd_necessaria(canal.name)
         embed = discord.Embed(
             title=f"🎮 FILA - {canal.name.upper()}",
             description=f"**Jogadores na fila: 0/{necessario}**\n\n*Fila vazia - clique para entrar*\n\n❄️ Gelo Infinito | 🧊 Gelo Normal",
             color=0x2b2d31
         )
-        embed.set_footer(text="Use os botões abaixo para entrar na fila")
         await canal.send(embed=embed, view=FilaView())
         return True
     except Exception as e:
         print(f"Erro no canal {canal.name}: {e}")
         return False
 
-# ===== COMANDOS =====
 @bot.tree.command(name="blacklist_setup", description="Cria o painel da blacklist")
 async def blacklist_setup(interaction: discord.Interaction):
     if not interaction.user.guild_permissions.administrator:
@@ -243,7 +225,7 @@ async def ap(interaction: discord.Interaction, adversario: discord.Member, valor
     if id_adversario:
         bl = load_bl()
         if id_adversario in bl:
-            await interaction.response.send_message(f"⛔ NEGADO! ID {id_adversario} está na blacklist.", ephemeral=True)
+            await interaction.response.send_message(f"⛔ NEGADO! ID na blacklist.", ephemeral=True)
             return
     guild = interaction.guild
     categoria = discord.utils.get(guild.categories, name="AP - ATIVO")
@@ -263,28 +245,23 @@ async def ap(interaction: discord.Interaction, adversario: discord.Member, valor
     await canal.send(content=f"{interaction.user.mention} {adversario.mention}", embed=embed, view=AprovacaoView())
     await interaction.response.send_message(f"Sala criada: {canal.mention}", ephemeral=True)
 
-# O FAMOSO RESET_TOTAL - AGORA COM LIMPEZA
 @bot.command(name="reset_total")
 @commands.has_permissions(administrator=True)
 async def reset_total(ctx):
     await ctx.send("🔄 Limpando todas as filas... Aguarde.")
-
-    # Zera o arquivo de filas
     save_filas({})
-
+    alvos = ["1x1-mobile", "2x2-mobile", "3x3-mobile", "4x4-mobile", "1x1-emulador", "2x2-emulador", "3x3-emulador", "4x4-emulador", "2x2-misto", "3x3-misto", "4x4-misto", "1x1-misto"]
     count = 0
-    for nome in CANAIS_FILA:
-        canal = discord.utils.get(ctx.guild.channels, name=nome)
-        if canal:
-            ok = await limpar_e_criar_fila(canal)
-            if ok: count += 1
-            await asyncio.sleep(1) # evita rate limit
-
-    await ctx.send(f"✅ **{count} fileiras recriadas!**\nCanais limpos: {', '.join(CANAIS_FILA[:count])}\nBlacklist continua ativa.")
-
-@bot.command(name="setup_filas")
-@commands.has_permissions(administrator=True)
-async def setup_filas(ctx):
-    await reset_total(ctx)
+    canais_para_limpar = []
+    for canal in ctx.guild.text_channels:
+        for alvo in alvos:
+            if alvo in canal.name.lower():
+                canais_para_limpar.append(canal)
+                break
+    for canal in canais_para_limpar:
+        ok = await limpar_e_criar_fila(canal)
+        if ok: count += 1
+        await asyncio.sleep(1)
+    await ctx.send(f"✅ **{count} fileiras recriadas!**\nBlacklist continua ativa.")
 
 bot.run(os.getenv("DISCORD_TOKEN"))
