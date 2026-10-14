@@ -1,93 +1,92 @@
 import discord
 from discord.ext import commands
-import json, os
+import os, json
+
+TOKEN = os.getenv("DISCORD_TOKEN")
+VERDE = 0x00FF7F
+ARQ_FILA = "filas.json"
+
+VALORES = ["0,70","1,00","2,00","3,00","4,00","5,00","10,00","30,00","40,00","50,00","100,00","150,00","200,00"]
+
+CANAIS_SLUSH = [
+    "🦔・1x1-mobile","🦔・2x2-mobile","🦔・3x3-mobile","🦔・4x4-mobile",
+    "🦔・2x2-misto","🦔・3x3-misto","🦔・4x4-misto",
+    "🦔・1x1-emulador","🦔・2x2-emulador","🦔・3x3-emulador","🦔・4x4-emulador"
+]
+
+def load_json(a):
+    if not os.path.exists(a): return {}
+    try: return json.load(open(a))
+    except: return {}
+def save_json(a,d): json.dump(d, open(a,"w"))
 
 intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True
-
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-ARQ = "filas.json"
-
-def load_filas():
-    if not os.path.exists(ARQ): return {}
-    try:
-        with open(ARQ, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except: return {}
-
-def save_filas(d):
-    with open(ARQ, "w", encoding="utf-8") as f:
-        json.dump(d, f, ensure_ascii=False)
-
-filas = load_filas()
-
-
 class FilaView(discord.ui.View):
-    def __init__(self, canal, valor):
+    def __init__(self, canal_nome, valor_str):
         super().__init__(timeout=None)
-        self.canal = canal
-        self.valor = valor
-
-    def get_desc(self):
-        lista = filas.get(self.canal, [])
-        if not lista: return "🔹 Jogadores:\nNenhum jogador na fila."
-        linhas = [f"{i+1}º - <@{u}>" for i, u in enumerate(lista)]
-        return "🔹 Jogadores:\n" + "\n".join(linhas)
-
-    @discord.ui.button(label="Sair do infinito", style=discord.ButtonStyle.secondary)
-    async def infinito_sair(self, inter: discord.Interaction):
-        filas.setdefault(self.canal, []).remove(inter.user.id)
-        save_filas(filas)
-        emb = inter.message.embeds[0]
-        emb.description = self.get_desc()
-        await inter.response.edit_message(embed=emb, view=self)
-
-    @discord.ui.button(label="Entrar Normal", style=discord.ButtonStyle.secondary)
-    async def normal(self, inter: discord.Interaction):
-        filas.setdefault(self.canal, []).append(inter.user.id)
-        save_filas(filas)
-        emb = inter.message.embeds[0]
-        emb.description = self.get_desc()
-        await inter.response.edit_message(embed=emb, view=self)
-
+        self.canal_nome = canal_nome
+        self.valor_str = valor_str
+    @discord.ui.button(label="Entrar", style=discord.ButtonStyle.success)
+    async def entrar(self, inter, btn):
+        filas = load_json(ARQ_FILA)
+        chave = f"{self.canal_nome}_{self.valor_str}"
+        filas.setdefault(chave, [])
+        if inter.user.id not in filas[chave]:
+            filas[chave].append(inter.user.id)
+            save_json(ARQ_FILA, filas)
+        await inter.response.send_message("Entrou na fila", ephemeral=True)
     @discord.ui.button(label="Sair", style=discord.ButtonStyle.danger)
-    async def sair(self, inter: discord.Interaction):
-        uid = inter.user.id
-        if self.canal in filas and uid in filas[self.canal]:
-            filas[self.canal].remove(uid)
-            save_filas(filas)
-        emb = inter.message.embeds[0]
-        emb.description = self.get_desc()
-        await inter.response.edit_message(embed=emb, view=self)
-
-
-@bot.event
-async def on_ready():
-    print("ok")
-
+    async def sair(self, inter, btn):
+        filas = load_json(ARQ_FILA)
+        chave = f"{self.canal_nome}_{self.valor_str}"
+        if chave in filas and inter.user.id in filas[chave]:
+            filas[chave].remove(inter.user.id)
+            save_json(ARQ_FILA, filas)
+        await inter.response.send_message("Saiu da fila", ephemeral=True)
 
 @bot.command()
-async def painel_todas(ctx):
-    await ctx.message.delete()
-    for canal in ctx.guild.text_channels:
-        if "💥" not in canal.name: continue
-        nome = canal.name.lower()
-        if "1v1" not in nome and "1 vs 1" not in nome: continue
-        try:
-            valor = canal.name.split("💥")[-1].replace("•", "").strip()
-        except: valor = "0"
-        if "mobile" in nome.lower(): titulo = f"🏆 1v1 Mobile - R${valor}"
-        else: titulo = f"🏆 1v1 - R${valor}"
+async def painel_todos(ctx):
+    for nome_canal in CANAIS_SLUSH:
+        canal = discord.utils.get(ctx.guild.channels, name=nome_canal)
+        if not canal: continue
+        for valor in VALORES:
+            emb = discord.Embed(
+                title=f"• {nome_canal.split('・')[1]} - R$ {valor}",
+                description="Jogadores: Nenhum na fila",
+                color=VERDE
+            )
+            await canal.send(embed=emb, view=FilaView(nome_canal, valor))
 
-        filas.setdefault(canal.id, [])
-        desc = "🔹 Jogadores:\nNenhum jogador na fila."
-        if filas[canal.id]:
-            desc = "🔹 Jogadores:\n" + "\n".join([f"{i+1}º - <@{u}>" for i, u in enumerate(filas[canal.id])])
+@bot.command()
+async def painel_aqui(ctx):
+    nome_canal = ctx.channel.name
+    for valor in VALORES:
+        emb = discord.Embed(
+            title=f"• {nome_canal.split('・')[1]} - R$ {valor}",
+            description="Jogadores: Nenhum na fila",
+            color=VERDE
+        )
+        await ctx.send(embed=emb, view=FilaView(nome_canal, valor))
 
-        emb = discord.Embed(title=titulo, description=desc, color=0x2B2D31)
-        await canal.send(embed=emb, view=FilaView(canal.id, valor))
+@bot.command()
+@commands.has_permissions(manage_messages=True)
+async def limpar(ctx):
+    await ctx.channel.purge(limit=100)
 
+@bot.command()
+@commands.has_permissions(manage_messages=True)
+async def limpar_todos(ctx):
+    for nome_canal in CANAIS_SLUSH:
+        canal = discord.utils.get(ctx.guild.channels, name=nome_canal)
+        if canal:
+            try: await canal.purge(limit=100)
+            except: pass
 
-bot.run(os.getenv("DISCORD_TOKEN"))
+@bot.event
+async def on_ready(): print(f"ORG SLUSH LIMPO ON - {bot.user}")
+
+bot.run(TOKEN)
