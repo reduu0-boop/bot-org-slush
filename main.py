@@ -143,5 +143,21 @@ async def ap(interaction: discord.Interaction, adversario: discord.Member, valor
     embed = discord.Embed(title="💰 SALA DE AP CRIADA", description=f"{interaction.user.mention} vs {adversario.mention}\n**Valor: R$ {valor}**\n\nFaçam o PIX e cliquem em Aceitar AP.", color=0x2b2d31)
     await canal.send(content=f"{interaction.user.mention} {adversario.mention}", embed=embed, view=AprovacaoView())
     await interaction.response.send_message(f"Sala criada: {canal.mention}", ephemeral=True)
+@bot.command(name="reset_total")
+@commands.has_permissions(administrator=True)
+async def reset_total(ctx):
+    # se seu arquivo de filas chama filas.json
+    if os.path.exists("filas.json"):
+        os.remove("filas.json")
+    # se chama total.json
+    if os.path.exists("total.json"):
+        os.remove("total.json")
+    
+    await ctx.send("✅ Total de filas resetado! Todas as fileiras foram apagadas.")
 
+@reset_total.error
+async def reset_error(ctx, error):
+    if isinstance(error, commands.MissingPermissions):
+        await ctx.send("Você precisa ser ADM pra usar isso.")
+        
 bot.run(os.getenv("DISCORD_TOKEN"))
