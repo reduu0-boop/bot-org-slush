@@ -5,7 +5,6 @@ TOKEN = os.getenv("DISCORD_TOKEN") or os.getenv("TOKEN")
 PIX_KEY = os.getenv("PIX_KEY") or "PIX_NAO_CONFIGURADO"
 VALORES = [0.70, 1.00, 2.00, 3.00, 5.00, 7.00, 10.00, 15.00, 20.00, 30.00, 50.00, 100.00, 200.00]
 CATEGORIA_PARTIDAS = "PARTIDAS"
-CATEGORIA_TICKETS = "TICKETS"
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -44,8 +43,7 @@ def eh_canal_alvo(nome):
     if "exposed" in n or "suporte" in n or "ticket" in n or "bem-vindo" in n:
         return False
     return bool(re.search(r'\d+x\d+', n))
-
-def build_embed_fila(channel, valor):
+    def build_embed_fila(channel, valor):
     f = get_fila(channel.id, valor, channel.name)
     titulo = f"{formatar_titulo(channel.name)} • {formatar(valor)}"
     emb = discord.Embed(title=titulo, color=0x00FF88)
@@ -81,20 +79,16 @@ class AceitarAPView(discord.ui.View):
     async def aceitar(self, interaction: discord.Interaction, button: discord.ui.Button):
         cid = interaction.channel.id
         dados = aps.get(cid)
-        if not dados:
-            return await interaction.response.send_message("Erro: partida nao encontrada.", ephemeral=True)
+        if not dados: return await interaction.response.send_message("Erro: partida nao encontrada.", ephemeral=True)
         if interaction.user.id not in [j.id for j in dados["jogadores"]]:
             return await interaction.response.send_message("Voce nao faz parte dessa AP.", ephemeral=True)
         if interaction.user.id in dados["aceitos"]:
             return await interaction.response.send_message("Voce ja aceitou!", ephemeral=True)
-
         dados["aceitos"].add(interaction.user.id)
         qtd = len(dados["jogadores"])
         aceitos = len(dados["aceitos"])
-
         emb = interaction.message.embeds[0]
         lista_aceitos = "\n".join([f"✅ <@{uid}>" for uid in dados["aceitos"]])
-
         emb.description = (
             f"**Valor:** {formatar(dados['valor'])}\n"
             f"**Taxa:** {formatar(dados['taxa'])}\n"
@@ -104,7 +98,6 @@ class AceitarAPView(discord.ui.View):
             f"**Jogadores:** {' '.join([f'<@{j.id}>' for j in dados['jogadores']])}\n\n"
             f"**Aceitaram ({aceitos}/{qtd}):**\n{lista_aceitos}\n\n"
         )
-
         if aceitos >= qtd:
             emb.title = "✅ PARTIDA LIBERADA - CRIEM A SALA"
             emb.color = 0x00FF00
@@ -128,8 +121,7 @@ class AceitarAPView(discord.ui.View):
         await asyncio.sleep(3)
         try: await interaction.channel.delete()
         except: pass
-
-async def criar_canal_partida(guild, jogadores, valor, tipo_fila, canal_origem_nome):
+            async def criar_canal_partida(guild, jogadores, valor, tipo_fila, canal_origem_nome):
     categoria = discord.utils.get(guild.categories, name=CATEGORIA_PARTIDAS)
     if not categoria:
         categoria = await guild.create_category(CATEGORIA_PARTIDAS)
@@ -181,8 +173,7 @@ class FilaView(discord.ui.View):
             self.add_item(GeloButton("Gelo Infinito", valor, cid, nome_canal, discord.ButtonStyle.primary))
             self.add_item(GeloButton("Gelo Normal", valor, cid, nome_canal, discord.ButtonStyle.secondary))
             self.add_item(SairButton(valor, cid, nome_canal))
-
-class EmuButton(discord.ui.Button):
+            class EmuButton(discord.ui.Button):
     def __init__(self, label, valor, cid, nome_canal):
         super().__init__(label=label, style=discord.ButtonStyle.secondary, emoji="🎮", custom_id=f"emu_{label}_{cid}_{valor}")
         self.valor=valor; self.cid=cid; self.nome_canal=nome_canal; self.tipo=label
@@ -237,49 +228,9 @@ class SairButton(discord.ui.Button):
         await interaction.response.defer()
         await achar_e_editar(canal, self.valor, self.nome_canal)
 
-class AbrirTicketButton(discord.ui.Button):
-    def __init__(self):
-        super().__init__(label="Abrir Ticket", style=discord.ButtonStyle.primary, emoji="🎫", custom_id="abrir_ticket")
-    async def callback(self, interaction: discord.Interaction):
-        guild = interaction.guild
-        categoria = discord.utils.get(guild.categories, name=CATEGORIA_TICKETS)
-        if not categoria:
-            categoria = await guild.create_category(CATEGORIA_TICKETS)
-        for ch in categoria.text_channels:
-            if ch.topic and str(interaction.user.id) in ch.topic:
-                return await interaction.response.send_message(f"Voce ja tem um ticket aberto: {ch.mention}", ephemeral=True)
-        overwrites = {
-            guild.default_role: discord.PermissionOverwrite(view_channel=False),
-            guild.me: discord.PermissionOverwrite(view_channel=True, send_messages=True, manage_channels=True),
-            interaction.user: discord.PermissionOverwrite(view_channel=True, send_messages=True, read_message_history=True)
-        }
-        for role in guild.roles:
-            if "staff" in role.name.lower() or "adm" in role.name.lower() or "mod" in role.name.lower() or "suporte" in role.name.lower():
-                overwrites[role] = discord.PermissionOverwrite(view_channel=True, send_messages=True)
-        canal = await guild.create_text_channel(f"ticket-{interaction.user.name}", category=categoria, topic=str(interaction.user.id), overwrites=overwrites)
-        emb = discord.Embed(title="SUPORTE ORG SLUSH", description=f"Ola {interaction.user.mention}, seu ticket foi criado!\n\nDescreva seu problema que um staff vai te atender.", color=0x00FF88)
-        await canal.send(content=f"{interaction.user.mention}", embed=emb, view=FecharTicketView())
-        await interaction.response.send_message(f"Ticket criado: {canal.mention}", ephemeral=True)
-
-class TicketView(discord.ui.View):
-    def __init__(self):
-        super().__init__(timeout=None)
-        self.add_item(AbrirTicketButton())
-
-class FecharTicketView(discord.ui.View):
-    def __init__(self): super().__init__(timeout=None)
-    @discord.ui.button(label="Fechar Ticket", style=discord.ButtonStyle.danger, emoji="🔒", custom_id="fechar_ticket")
-    async def fechar(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_message("Fechando em 5s...")
-        await asyncio.sleep(5)
-        try: await interaction.channel.delete()
-        except: pass
-
 @bot.event
 async def on_ready():
     print(f"ON {bot.user}")
-    bot.add_view(TicketView())
-    bot.add_view(FecharTicketView())
     bot.add_view(FecharPartidaView())
     bot.add_view(AceitarAPView())
 
@@ -292,11 +243,6 @@ async def fila(ctx):
                 await canal.send(embed=build_embed_fila(canal, v), view=FilaView(v, canal.id, canal.name))
                 total+=1
     await ctx.send(f"✅ {total} fileiras criadas!")
-
-@bot.command()
-async def suporte(ctx):
-    emb = discord.Embed(title="SUPORTE ORG SLUSH", description="Clique abaixo para abrir ticket privado.", color=0x5865F2)
-    await ctx.send(embed=emb, view=TicketView())
 
 @bot.command()
 async def reset_total(ctx):
