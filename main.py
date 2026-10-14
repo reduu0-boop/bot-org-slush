@@ -6,22 +6,21 @@ intents = discord.Intents.all()
 bot = commands.Bot(command_prefix="!", intents=intents)
 
 BLACKLIST_FILE = "blacklist.json"
-TICKET_FILE = "tickets.json"
+AP_FILE = "ap_data.json" # troquei de nome pra não confundir com suporte
 
-# ===== FUNÇÕES BLACKLIST =====
 def load_bl():
     if not os.path.exists(BLACKLIST_FILE): return {}
     with open(BLACKLIST_FILE, "r") as f: return json.load(f)
 def save_bl(data):
     with open(BLACKLIST_FILE, "w") as f: json.dump(data, f, indent=4)
 
-def load_tickets():
-    if not os.path.exists(TICKET_FILE): return {}
-    with open(TICKET_FILE, "r") as f: return json.load(f)
-def save_tickets(data):
-    with open(TICKET_FILE, "w") as f: json.dump(data, f, indent=4)
+def load_ap():
+    if not os.path.exists(AP_FILE): return {}
+    with open(AP_FILE, "r") as f: return json.load(f)
+def save_ap(data):
+    with open(AP_FILE, "w") as f: json.dump(data, f, indent=4)
 
-# ===== MODAIS BLACKLIST - IGUAL DA FOTO =====
+# ===== MODAIS BLACKLIST =====
 class ConsultarIDModal(discord.ui.Modal, title="Consultar ID na Blacklist"):
     id_input = discord.ui.TextInput(label="Digite o ID", placeholder="Ex: 123456789")
     async def on_submit(self, interaction: discord.Interaction):
@@ -57,23 +56,20 @@ class BlacklistView(discord.ui.View):
     @discord.ui.button(label="Consultar Jogador", style=discord.ButtonStyle.secondary, emoji="🔍", custom_id="bl_nick")
     async def b2(self, interaction, button): await interaction.response.send_modal(ConsultarNickModal())
 
-# ===== SISTEMA DE AP (1x1) =====
+# ===== SISTEMA DE AP =====
 class AprovacaoView(discord.ui.View):
     def __init__(self): super().__init__(timeout=None)
     @discord.ui.button(label="Aceitar AP", style=discord.ButtonStyle.success, custom_id="aceitar_ap")
     async def aceitar(self, interaction: discord.Interaction, button: discord.ui.Button):
-        tickets = load_tickets()
+        aps = load_ap()
         canal_id = str(interaction.channel.id)
-        if canal_id not in tickets:
-            await interaction.response.send_message("Ticket não encontrado.", ephemeral=True); return
-        
-        ticket = tickets[canal_id]
+        if canal_id not in aps:
+            await interaction.response.send_message("Sala de AP não encontrada.", ephemeral=True); return
+        ticket = aps[canal_id]
         user_id = str(interaction.user.id)
-
         if user_id not in ticket["aceitaram"]:
             ticket["aceitaram"].append(user_id)
-            save_tickets(tickets)
-
+            save_ap(aps)
         if len(ticket["aceitaram"]) >= 2:
             embed = discord.Embed(title="✅ AP CONFIRMADO", description=f"Os dois confirmaram!\nAP de R$ {ticket['valor']}\nPode começar.", color=0x00ff00)
             await interaction.channel.send(embed=embed)
@@ -94,14 +90,13 @@ async def on_ready():
     try: await bot.tree.sync()
     except: pass
 
-# ===== COMANDOS =====
-@bot.tree.command(name="blacklist_setup", description="Cria o painel da blacklist igual da foto")
+@bot.tree.command(name="blacklist_setup", description="Cria o painel da blacklist")
 async def blacklist_setup(interaction: discord.Interaction):
     if not interaction.user.guild_permissions.administrator:
         await interaction.response.send_message("Só ADM", ephemeral=True); return
     embed = discord.Embed(title="Blacklist", description="Clique no botão abaixo para verificar um ID na blacklist.", color=0x2b2d31)
     await interaction.channel.send(embed=embed, view=BlacklistView())
-    await interaction.response.send_message("Painel criado igual da foto!", ephemeral=True)
+    await interaction.response.send_message("Painel criado!", ephemeral=True)
 
 @bot.tree.command(name="bl_add", description="Add na blacklist")
 async def bl_add(interaction: discord.Interaction, id_jogador: str, nick: str, motivo: str):
@@ -123,35 +118,28 @@ async def bl_remove(interaction: discord.Interaction, id_jogador: str):
     else:
         await interaction.response.send_message("ID não está na blacklist.", ephemeral=True)
 
-# COMANDO AP QUE VOCÊ JÁ USA
 @bot.tree.command(name="ap", description="Criar sala de AP 1x1")
 async def ap(interaction: discord.Interaction, adversario: discord.Member, valor: str, id_adversario: str = None):
-    # VERIFICA BLACKLIST AUTOMATICO
     if id_adversario:
         bl = load_bl()
         if id_adversario in bl:
             info = bl[id_adversario]
             await interaction.response.send_message(f"⛔ NEGADO! O ID {id_adversario} está na blacklist.\nMotivo: {info['motivo']}", ephemeral=True)
             return
-
     guild = interaction.guild
     categoria = discord.utils.get(guild.categories, name="AP - ATIVO")
     if not categoria:
         categoria = await guild.create_category("AP - ATIVO")
-
     overwrites = {
         guild.default_role: discord.PermissionOverwrite(view_channel=False),
         interaction.user: discord.PermissionOverwrite(view_channel=True, send_messages=True),
         adversario: discord.PermissionOverwrite(view_channel=True, send_messages=True),
         guild.me: discord.PermissionOverwrite(view_channel=True, send_messages=True)
     }
-    
     canal = await guild.create_text_channel(f"ap-{interaction.user.name}-{adversario.name}", category=categoria, overwrites=overwrites)
-    
-    tickets = load_tickets()
-    tickets[str(canal.id)] = {"valor": valor, "jogadores": [str(interaction.user.id), str(adversario.id)], "aceitaram": []}
-    save_tickets(tickets)
-
+    aps = load_ap()
+    aps[str(canal.id)] = {"valor": valor, "jogadores": [str(interaction.user.id), str(adversario.id)], "aceitaram": []}
+    save_ap(aps)
     embed = discord.Embed(title="💰 SALA DE AP CRIADA", description=f"{interaction.user.mention} vs {adversario.mention}\n**Valor: R$ {valor}**\n\nFaçam o PIX e cliquem em Aceitar AP.", color=0x2b2d31)
     await canal.send(content=f"{interaction.user.mention} {adversario.mention}", embed=embed, view=AprovacaoView())
     await interaction.response.send_message(f"Sala criada: {canal.mention}", ephemeral=True)
