@@ -5,114 +5,116 @@ import os, json, random
 TOKEN = os.getenv("DISCORD_TOKEN")
 VERDE = 0x00FF7F
 ARQ_FILA = "filas.json"
-ARQ_BLACK = "blacklist.json"
 
-VALORES_SLUSH = ["0,70","1,00","2,00","3,00","4,00","5,00","10,00","30,00","40,00","50,00","100,00","150,00","200,00"]
+VALORES = ["0,70","1,00","2,00","3,00","4,00","5,00","10,00","30,00","40,00","50,00","100,00","150,00","200,00"]
 
-def get_taxa(valor_float):
-    if valor_float <= 30.00:
-        return 0.50
-    else:
-        return 2.50
+CANAIS_SLUSH = [
+    "🦔・1x1-mobile",
+    "🦔・2x2-mobile",
+    "🦔・3x3-mobile",
+    "🦔・4x4-mobile",
+    "🦔・2x2-misto",
+    "🦔・3x3-misto",
+    "🦔・4x4-misto",
+    "🦔・1x1-emulador",
+    "🦔・2x2-emulador",
+    "🦔・3x3-emulador",
+    "🦔・4x4-emulador"
+]
+
+def get_taxa(v):
+    return 0.50 if v <= 30 else 2.50
 
 def load_json(arq):
     if not os.path.exists(arq): return {}
     try:
-        with open(arq,"r") as f: return json.load(f)
+        import json; return json.load(open(arq))
     except: return {}
-
 def save_json(arq,data):
-    with open(arq,"w") as f: json.dump(data,f)
+    import json; json.dump(data, open(arq,"w"))
 
 intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-class VerificacaoModal(discord.ui.Modal, title="Verificacao ORG SLUSH"):
-    comida = discord.ui.TextInput(label="Digite: batata", placeholder="Escreva batata")
-    async def on_submit(self, interaction):
-        if self.comida.value.lower()!= "batata":
-            await interaction.response.send_message("Falhou!", ephemeral=True); return
-        await interaction.response.send_message("OK!", ephemeral=True)
-
 class FilaView(discord.ui.View):
-    def __init__(self, modo, valor_str, tipo):
+    def __init__(self, canal_nome, valor_str):
         super().__init__(timeout=None)
-        self.modo=modo; self.valor_str=valor_str; self.tipo=tipo
+        self.canal_nome = canal_nome
+        self.valor_str = valor_str
     @discord.ui.button(label="Entrar", style=discord.ButtonStyle.success)
-    async def entrar(self, interaction, button):
-        bl=load_json(ARQ_BLACK)
-        if str(interaction.user.id) in bl:
-            await interaction.response.send_message("BLACKLIST ORG SLUSH", ephemeral=True); return
-        await interaction.response.send_modal(VerificacaoModal())
-        filas=load_json(ARQ_FILA)
-        chave=f"{self.modo}_{self.valor_str}_{self.tipo}"
+    async def entrar(self, inter, btn):
+        filas = load_json(ARQ_FILA)
+        chave = f"{self.canal_nome}_{self.valor_str}"
         if chave not in filas: filas[chave]=[]
-        if interaction.user.id not in filas[chave]:
-            filas[chave].append(interaction.user.id)
+        if inter.user.id not in filas[chave]:
+            filas[chave].append(inter.user.id)
             save_json(ARQ_FILA, filas)
-            total_needed=int(self.modo[0])
-            if len(filas[chave]) >= total_needed:
-                jogs=filas[chave][:total_needed]
-                filas[chave]=filas[chave][total_needed:]
+            await inter.response.send_message(f"Entrou na fila {self.canal_nome} R$ {self.valor_str} ORG SLUSH", ephemeral=True)
+            # pega qtd necessária: 1x1=2, 2x2=4, 3x3=6, 4x4=8
+            modo = self.canal_nome.split("・")[1].split("-")[0] # 1x1
+            q = int(modo[0]) * 2
+            if len(filas[chave]) >= q:
+                # cria partida
+                v=float(self.valor_str.replace(",","."))
+                taxa=get_taxa(v)
+                total=v+taxa
+                premio=v*q
+                ch = inter.channel
+                emb = discord.Embed(
+                    title=f"ORG SLUSH - {self.canal_nome} R$ {self.valor_str}",
+                    description=f"AP: R$ {v:.2f}\nTAXA: R$ {taxa:.2f}\nPAGAR: R$ {total:.2f}\nPREMIO: R$ {premio:.2f}",
+                    color=VERDE
+                )
+                await ch.send(f"Partida fechou! {' '.join([f'<@{id}>' for id in filas[chave][:q]])}", embed=emb)
+                filas[chave]=filas[chave][q:]
                 save_json(ARQ_FILA, filas)
-                await criar_partida(interaction.guild, jogs, self.modo, self.valor_str)
+        else:
+            await inter.response.send_message("Já está na fila", ephemeral=True)
 
     @discord.ui.button(label="Sair", style=discord.ButtonStyle.danger)
-    async def sair(self, interaction, button):
-        filas=load_json(ARQ_FILA)
-        chave=f"{self.modo}_{self.valor_str}_{self.tipo}"
-        if chave in filas and interaction.user.id in filas[chave]:
-            filas[chave].remove(interaction.user.id)
+    async def sair(self, inter, btn):
+        filas = load_json(ARQ_FILA)
+        chave = f"{self.canal_nome}_{self.valor_str}"
+        if chave in filas and inter.user.id in filas[chave]:
+            filas[chave].remove(inter.user.id)
             save_json(ARQ_FILA, filas)
-        await interaction.response.send_message("Saiu da fila ORG SLUSH", ephemeral=True)
-
-async def criar_partida(guild, jogadores, modo, valor_str):
-    v_float = float(valor_str.replace(",","."))
-    taxa = get_taxa(v_float)
-    total_pagar = v_float + taxa
-    premio = v_float * len(jogadores)
-
-    cat = discord.utils.get(guild.categories, name="PARTIDAS SLUSH")
-    if not cat: cat = await guild.create_category("PARTIDAS SLUSH")
-    overw = {guild.default_role: discord.PermissionOverwrite(view_channel=False)}
-    for uid in jogadores:
-        m=guild.get_member(uid)
-        if m: overw[m]=discord.PermissionOverwrite(view_channel=True, send_messages=True)
-    ch = await guild.create_text_channel(f"partida-{random.randint(1000,9999)}", overwrites=overw, category=cat)
-
-    mencoes = " ".join([f"<@{x}>" for x in jogadores])
-    emb = discord.Embed(
-        title=f"ORG SLUSH - {modo} R$ {valor_str}",
-        description=(
-            f"**AP:** R$ {v_float:.2f}\n"
-            f"**TAXA ORG:** R$ {taxa:.2f}\n"
-            f"**TOTAL A PAGAR:** R$ {total_pagar:.2f}\n\n"
-            f"🏆 **PREMIO VENCEDOR:** R$ {premio:.2f}\n"
-            f"🏦 **LUCRO ORG SLUSH:** R$ {taxa*len(jogadores):.2f}"
-        ),
-        color=VERDE
-    )
-    emb.set_footer(text="ORG SLUSH - VERDE OFICIAL")
-    await ch.send(f"{mencoes}\nPAGUEM R$ {total_pagar:.2f} CADA E MANDEM COMPROVANTE", embed=emb)
+        await inter.response.send_message("Saiu", ephemeral=True)
 
 @bot.command()
-async def painel_slush(ctx):
-    # CRIA TODOS DE UMA VEZ IGUAL FUSION
-    for valor in VALORES_SLUSH:
-        v_float=float(valor.replace(",","."))
-        taxa=get_taxa(v_float)
-        total=v_float+taxa
+async def painel_todos(ctx):
+    # Use esse comando no canal certo ou ele vai criar em todos de uma vez
+    for nome_canal in CANAIS_SLUSH:
+        canal = discord.utils.get(ctx.guild.channels, name=nome_canal)
+        if not canal:
+            continue
+        for valor in VALORES:
+            v=float(valor.replace(",","."))
+            taxa=get_taxa(v)
+            emb=discord.Embed(
+                title=f"{nome_canal} - R$ {valor}",
+                description=f"Jogadores: Nenhum na fila\n\n💸 Pagar: R$ {v+taxa:.2f} (AP R$ {v:.2f} + Taxa R$ {taxa:.2f})\n🏆 Premio total: R$ {v*2:.2f} por time vencedor\n🦔 ORG SLUSH",
+                color=VERDE
+            )
+            await canal.send(embed=emb, view=FilaView(nome_canal, valor))
+
+@bot.command()
+async def painel_aqui(ctx):
+    # Cria só no canal onde você digitou
+    nome_canal = ctx.channel.name
+    for valor in VALORES:
+        v=float(valor.replace(",","."))
+        taxa=get_taxa(v)
         emb=discord.Embed(
-            title=f"1x1 Mobile - R$ {valor}",
-            description=f"Jogadores:\nNenhum jogador na fila.\n\n💸 Pagar: R$ {total:.2f} (R$ {v_float:.2f} AP + R$ {taxa:.2f} ORG)\n🏆 Ganha: R$ {v_float*2:.2f}",
+            title=f"{nome_canal} - R$ {valor}",
+            description=f"Jogadores: Nenhum na fila\n\n💸 Pagar: R$ {v+taxa:.2f}\n🏆 Ganha: R$ {v*2:.2f}\nTaxa ORG SLUSH: R$ {taxa:.2f}",
             color=VERDE
         )
-        await ctx.send(embed=emb, view=FilaView("1x1", valor, "Mobile"))
+        await ctx.send(embed=emb, view=FilaView(nome_canal, valor))
 
 @bot.event
 async def on_ready():
-    print(f"ORG SLUSH VERDE ON {bot.user}")
+    print(f"ORG SLUSH VERDE ON")
 
 bot.run(TOKEN)
