@@ -1,214 +1,221 @@
 import discord
 from discord.ext import commands
-import json, os, asyncio, datetime
+import json
+import os
+import asyncio
 
-intents = discord.Intents.all()
+intents = discord.Intents.default()
+intents.message_content = True
+intents.members = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-FILA_FILE = "filas.json"
-BLACKLIST_FILE = "blacklist.json"
+VALORES = ["1", "2", "3", "5", "10", "15", "20", "30", "40", "50", "75", "100", "150"]
+COR = 0x2ECC71
+ARQUIVO_FILAS = "filas.json"
+ARQUIVO_BLACKLIST = "blacklist.json"
+ARQUIVO_SALAS = "salas.json"
 
-VALORES = ["0,70", "1,00", "2,00", "3,00", "4,00", "5,00", "10,00", "15,00", "20,00", "30,00", "50,00", "100,00", "200,00"]
-
-def load_bl():
-    if not os.path.exists(BLACKLIST_FILE): return {}
+def load_json(path, default):
+    if not os.path.exists(path): return default
     try:
-        with open(BLACKLIST_FILE,"r") as f: return json.load(f)
-    except: return {}
-def load_filas():
-    if not os.path.exists(FILA_FILE): return {}
-    try:
-        with open(FILA_FILE,"r") as f: return json.load(f)
-    except: return {}
-def save_filas(d):
-    with open(FILA_FILE,"w") as f: json.dump(d,f,indent=4)
+        with open(path, "r") as f: return json.load(f)
+    except: return default
 
-def qtd_necessaria(nome):
-    n=nome.lower()
-    if "1x1" in n: return 2
-    if "2x2" in n: return 4
-    if "3x3" in n: return 6
-    if "4x4" in n: return 8
-    return 2
+def save_json(path, data):
+    with open(path, "w") as f: json.dump(data, f, indent=4)
 
-def get_titulo_modo(nome_canal):
+def get_modo(nome_canal):
     n = nome_canal.lower()
-    if "1x1-mobile" in n: return "1v1 Mobile"
-    if "2x2-mobile" in n: return "2v2 Mobile"
-    if "3x3-mobile" in n: return "3v3 Mobile"
-    if "4x4-mobile" in n: return "4v4 Mobile"
-    if "1x1-emulador" in n: return "1v1 Emulador"
-    if "2x2-emulador" in n: return "2v2 Emulador"
-    if "3x3-emulador" in n: return "3v3 Emulador"
-    if "4x4-emulador" in n: return "4v4 Emulador"
-    if "2x2-misto" in n: return "2v2 Misto"
-    if "3x3-misto" in n: return "3v3 Misto"
-    if "4x4-misto" in n: return "4v4 Misto"
-    return nome_canal
+    if "mobile" in n: return "1x1 Mobile"
+    if "emulador" in n: return "1x1 Emulador"
+    if "misto" in n: return "1x1 Misto"
+    if "4x4-mobile" in n: return "4x4 Mobile"
+    if "4x4-emulador" in n: return "4x4 Emulador"
+    return "1x1 Mobile"
 
-# ===== VIEWS =====
-class ViewMobileEmu(discord.ui.View):
+def get_qtd(modo):
+    return 8 if "4x4" in modo else 2
+
+def build_desc_mobile(lista, necessario):
+    inf = [p for p in lista if p.get("tipo") == "inf"]
+    normal = [p for p in lista if p.get("tipo") == "normal"]
+    
+    def fmt(jogadores):
+        if not jogadores: return "Nenhum jogador na fila."
+        return "\n".join([f"<@{j['id']}>" for j in jogadores])
+
+    return f"**Jogadores**\n❄️ Gelo Infinito ({len(inf)}/{necessario}):\n{fmt(inf)}\n\n🧊 Gelo Normal ({len(normal)}/{necessario}):\n{fmt(normal)}"
+
+def get_titulo(modo, valor):
+    return f"• {modo} • R$ {valor} •"
+    async def criar_sala_privada(guild, modo, valor, tipo_gelo, jogadores):
+    cat = discord.utils.get(guild.categories, name="PARTIDAS ATIVAS")
+    if not cat:
+        cat = await guild.create_category("PARTIDAS ATIVAS")
+
+    overwrites = {guild.default_role: discord.PermissionOverwrite(view_channel=False)}
+    for j in jogadores:
+        try:
+            m = guild.get_member(int(j["id"]))
+            if m: overwrites[m] = discord.PermissionOverwrite(view_channel=True, send_messages=True)
+        except: pass
+    overwrites[guild.me] = discord.PermissionOverwrite(view_channel=True, send_messages=True)
+
+    tipo_txt = "INFINITO" if tipo_gelo == "inf" else "NORMAL"
+    canal = await guild.create_text_channel(
+        name=f"🎮・{modo}-R${valor}-{tipo_txt}".lower().replace(" ", "-")[:90],
+        category=cat, overwrites=overwrites
+    )
+
+    sala_id = str(canal.id)
+    salas = load_json(ARQUIVO_SALAS, {})
+    salas[sala_id] = {"jogadores": [j["id"] for j in jogadores], "aceitos": [], "modo": modo, "valor": valor, "tipo": tipo_txt}
+    save_json(ARQUIVO_SALAS, salas)
+
+    embed = discord.Embed(
+        title=f"• {modo} • R$ {valor} • Gelo {tipo_txt} •",
+        description=f"Partida fechou!\n\nJogadores:\n" + "\n".join([f"<@{j['id']}>" for j in jogadores]) + "\n\nClique em aceitar para confirmar.",
+        color=COR
+    )
+    await canal.send(f"{' '.join([f'<@{j[\"id\"]}>' for j in jogadores])}", embed=embed, view=ViewSala())
+    return canal
+
+class ViewSala(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @discord.ui.button(label="Aceitar", style=discord.ButtonStyle.success, emoji="✅", custom_id="sala:aceitar")
+    async def aceitar(self, interaction: discord.Interaction, button: discord.ui.Button):
+        salas = load_json(ARQUIVO_SALAS, {})
+        sala = salas.get(str(interaction.channel.id))
+        if not sala: return await interaction.response.send_message("Sala não encontrada.", ephemeral=True)
+        if str(interaction.user.id) not in sala["jogadores"]:
+            return await interaction.response.send_message("Você não está nessa partida.", ephemeral=True)
+        if str(interaction.user.id) not in sala["aceitos"]:
+            sala["aceitos"].append(str(interaction.user.id))
+            save_json(ARQUIVO_SALAS, salas)
+
+        aceitos_txt = ", ".join([f"<@{i}>" for i in sala["aceitos"]]) if sala["aceitos"] else "Ninguém"
+        await interaction.response.send_message(f"Você aceitou! Aceitaram: {aceitos_txt}", ephemeral=False)
+
+        if len(sala["aceitos"]) == len(sala["jogadores"]):
+            await interaction.channel.send("✅ **Todos aceitaram! Chamem um moderador para iniciar.** @here")
+            class ViewMobileEmu(discord.ui.View):
     def __init__(self, modo, valor):
         super().__init__(timeout=None)
         self.modo = modo
         self.valor = valor
-        self.add_item(discord.ui.Button(label="Gelo Infinito", style=discord.ButtonStyle.primary, emoji="🧊", custom_id=f"gelo:{modo}:{valor}:inf"))
-        self.add_item(discord.ui.Button(label="Gelo Normal", style=discord.ButtonStyle.secondary, emoji="🧊", custom_id=f"gelo:{modo}:{valor}:normal"))
-        self.add_item(discord.ui.Button(label="Sair", style=discord.ButtonStyle.danger, emoji="↩️", custom_id=f"gelo:{modo}:{valor}:sair"))
+        
 
-class ViewMisto(discord.ui.View):
-    def __init__(self, modo, valor, max_emu):
-        super().__init__(timeout=None)
-        self.modo = modo
-        self.valor = valor
-        for i in range(1, max_emu+1):
-            self.add_item(discord.ui.Button(label=f"{i} Emu", style=discord.ButtonStyle.secondary, custom_id=f"misto:{modo}:{valor}:{i}emu"))
-        self.add_item(discord.ui.Button(label="Sair", style=discord.ButtonStyle.danger, emoji="📤", custom_id=f"misto:{modo}:{valor}:sair"))
+    @discord.ui.button(label="Recusar", style=discord.ButtonStyle.danger, emoji="❌", custom_id="sala:recusar")
+    async def recusar(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_message("Partida cancelada. Apagando sala em 5s...", ephemeral=False)
+        salas = load_json(ARQUIVO_SALAS, {})
+        salas.pop(str(interaction.channel.id), None)
+        save_json(ARQUIVO_SALAS, salas)
+        await asyncio.sleep(5)
+        await interaction.channel.delete(reason="Partida recusada")
+        @discord.ui.button(label="Gelo Infinito", style=discord.ButtonStyle.primary, emoji="❄️", custom_id="mob:inf")
+    async def btn_inf(self, interaction, button):
+                async def entrar_fila(self, interaction, tipo_gelo):
+        uid = str(interaction.user.id)
+        chave = f"{self.modo}_{self.valor}_{tipo_gelo}"
 
-@bot.event
+        filas = load_json(ARQUIVO_FILAS, {})
+        if chave not in filas: filas[chave] = []
+
+        # verifica se ja esta em alguma fila
+        for k, lista in filas.items():
+            if any(j["id"] == uid for j in lista):
+                return await interaction.response.send_message(f"Você já está na fila {k}", ephemeral=True)
+
+        filas[chave].append({"id": uid, "nome": interaction.user.display_name})
+        save_json(ARQUIVO_FILAS, filas)
+
+        await interaction.response.send_message(f"✅ Entrou na fila {self.modo} R${self.valor} - Gelo {tipo_gelo}", ephemeral=True)
+
+        qtd = len(filas[chave])
+        limite = 4 if self.modo == "4x4" else 6 if self.modo == "6x6" else 4
+        await interaction.followup.send(f"👥 {qtd}/{limite} jogadores na fila.", ephemeral=True)
+
+        if qtd >= limite:
+            jogadores = filas[chave][:limite]
+            filas[chave] = filas[chave][limite:]
+            save_json(ARQUIVO_FILAS, filas)
+            canal = await criar_sala_privada(interaction.guild, self.modo, self.valor, tipo_gelo, jogadores)
+            await interaction.followup.send(f"🎮 Partida fechada! Vá para {canal.mention}", ephemeral=True)
+
+    async def sair_fila(self, interaction):
+        uid = str(interaction.user.id)
+        filas = load_json(ARQUIVO_FILAS, {})
+        achou = False
+        for k in list(filas.keys()):
+            antes = len(filas[k])
+            filas[k] = [j for j in filas[k] if j["id"]!= uid]
+            if len(filas[k])!= antes: achou = True
+        save_json(ARQUIVO_FILAS, filas)
+        if achou:
+            await interaction.response.send_message("🚪 Saiu de todas as filas.", ephemeral=True)
+        else:
+            await interaction.response.send_message("Você não está em fila.", ephemeral=True)
+        await self.entrar_fila(interaction, "inf")
+
+    @discord.ui.button(label="Gelo Normal", style=discord.ButtonStyle.secondary, emoji="🧊", custom_id="mob:normal")
+    async def btn_normal(self, interaction, button):
+        await self.entrar_fila(interaction, "normal")
+
+    @discord.ui.button(label="Sair da Fila", style=discord.ButtonStyle.danger, emoji="🚪", custom_id="mob:sair")
+    async def btn_sair(self, interaction, button):
+        await self.sair_fila(interaction)
+    @bot.event
+async def on_ready():
+    print(f"Logado como {bot.user}")
+    try:
+        synced = await bot.tree.sync()
+        print(f"Sync {len(synced)} comandos")
+    except Exception as e:
+        print(e)
+
+@bot.tree.command(name="painel_apostas", description="Criar painel de apostas")
+@discord.app_commands.checks.has_permissions(administrator=True)
+async def painel_apostas(interaction: discord.Interaction):
+    embed = discord.Embed(
+        title="🎮 CRIAR SALA APOSTADA 🎮",
+        description="Escolha o modo, valor e tipo de gelo abaixo.\n\n**Modos:** 4x4 Emulador / 6x6 Mobile\n**Valores:** 5, 10, 20, 50, etc\n**Gelo:** Infinito ou Normal",
+        color=COR
+    )
+    view = discord.ui.View(timeout=None)
+    view.add_item(discord.ui.Button(label="4x4 - R$5", style=discord.ButtonStyle.success, custom_id="criar:4x4_5"))
+    view.add_item(discord.ui.Button(label="4x4 - R$10", style=discord.ButtonStyle.success, custom_id="criar:4x4_10"))
+    view.add_item(discord.ui.Button(label="6x6 - R$5", style=discord.ButtonStyle.primary, custom_id="criar:6x6_5"))
+    view.add_item(discord.ui.Button(label="6x6 - R$10", style=discord.ButtonStyle.primary, custom_id="criar:6x6_10"))
+    await interaction.response.send_message(embed=embed, view=view)
+
+@bot.tree.command(name="limpar_filas", description="Limpar todas as filas")
+@discord.app_commands.checks.has_permissions(administrator=True)
+async def limpar_filas(interaction: discord.Interaction):
+    save_json(ARQUIVO_FILAS, {})
+    await interaction.response.send_message("✅ Filas limpas!", ephemeral=True)
+    @bot.event
 async def on_interaction(interaction: discord.Interaction):
-    if interaction.type!= discord.InteractionType.component:
+    if interaction.type != discord.InteractionType.component:
         return
-    custom_id = interaction.data.get("custom_id","")
-    if not (custom_id.startswith("gelo:") or custom_id.startswith("misto:")):
-        return
-
-    if str(interaction.user.id) in load_bl():
-        await interaction.response.send_message("⛔ Você está na blacklist", ephemeral=True)
+    cid = interaction.data.get("custom_id","")
+    if not cid.startswith("criar:"):
         return
 
     try:
-        tipo, modo, valor, acao = custom_id.split(":")
+        _, dados = cid.split(":",1)
+        modo, valor = dados.split("_")
     except:
         return
 
-    filas = load_filas()
-    key = f"{interaction.channel.id}_{valor}"
-    lista = filas.get(key, [])
+    embed = discord.Embed(
+        title=f"• {modo} • R$ {valor} •",
+        description=f"**Fila aberta para {modo} valendo R$ {valor}**\n\nEscolha o tipo de gelo:\n❄️ Infinito\n🧊 Normal\n\nClique abaixo para entrar!",
+        color=COR
+    )
+    await interaction.response.send_message(embed=embed, view=ViewMobileEmu(modo, valor))
 
-    # SAIR
-    if acao == "sair":
-        lista = [x for x in lista if x["id"]!= str(interaction.user.id)]
-        filas[key] = lista
-        save_filas(filas)
-        await interaction.response.send_message(f"Saiu da fila R$ {valor}", ephemeral=True)
-    else:
-        # Já está?
-        if any(x["id"] == str(interaction.user.id) for x in lista):
-            await interaction.response.send_message("Você já está nessa fila! Clique em Sair para trocar.", ephemeral=True)
-            return
-
-        if tipo == "gelo":
-            gelo_tipo = "Gelo Infinito" if acao == "inf" else "Gelo Normal"
-            lista.append({"id": str(interaction.user.id), "info": gelo_tipo})
-        else: # misto
-            lista.append({"id": str(interaction.user.id), "info": f"{acao.replace('emu','')} Emu"})
-
-        filas[key] = lista
-        save_filas(filas)
-        await interaction.response.send_message(f"✅ Entrou: {modo} R$ {valor}", ephemeral=True)
-
-    # ATUALIZA EMBED - IGUAL DA SUA PRINT
-    try:
-        if not lista:
-            desc_jogadores = "Nenhum jogador na fila."
-        else:
-            linhas = []
-            for p in lista:
-                # Mostra o nome embaixo de Jogadores
-                linhas.append(f"<@{p['id']}>")
-            desc_jogadores = "\n".join(linhas)
-
-        embed = discord.Embed(
-            title=f"• {modo} • R$ {valor}",
-            description=f"**Jogadores**\n{desc_jogadores}",
-            color=0x2ECC71 # VERDE igual você pediu
-        )
-
-        # Recria a view correta
-        if tipo == "gelo":
-            view = ViewMobileEmu(modo, valor)
-        else:
-            max_emu = 1 if "2v2" in modo else 2 if "3v3" in modo else 3
-            view = ViewMisto(modo, valor, max_emu)
-
-        await interaction.message.edit(embed=embed, view=view)
-
-        # Fecha fila se lotou
-        nec = qtd_necessaria(interaction.channel.name)
-        if len(lista) >= nec:
-            mencoes = " ".join([f"<@{p['id']}>" for p in lista[:nec]])
-            await interaction.channel.send(f"🔥 **FILA FECHOU • {modo} • R$ {valor}** - {mencoes}")
-            filas[key] = lista[nec:]
-            save_filas(filas)
-            embed2 = discord.Embed(title=f"• {modo} • R$ {valor}", description="**Jogadores**\nNenhum jogador na fila.", color=0x2ECC71)
-            await interaction.message.edit(embed=embed2, view=view)
-
-    except Exception as e:
-        print(f"Erro update: {e}")
-
-@bot.event
-async def on_ready():
-    print(f"Online {bot.user}")
-    # Registra views persistentes
-    for modo in ["1v1 Mobile","2v2 Mobile","3v3 Mobile","4v4 Mobile","1v1 Emulador","2v2 Emulador","3v3 Emulador","4v4 Emulador"]:
-        for v in VALORES:
-            bot.add_view(ViewMobileEmu(modo, v))
-    for modo in ["2v2 Misto","3v3 Misto","4v4 Misto"]:
-        max_emu = 1 if "2v2" in modo else 2 if "3v3" in modo else 3
-        for v in VALORES:
-            bot.add_view(ViewMisto(modo, v, max_emu))
-    try: await bot.tree.sync()
-    except: pass
-
-async def limpar_e_criar_fila(canal):
-    try:
-        await canal.purge(limit=100)
-        await asyncio.sleep(0.5)
-        await canal.purge(limit=100)
-
-        modo = get_titulo_modo(canal.name)
-        is_misto = "misto" in canal.name.lower()
-
-        # Cria as 13 mensagens do maior para o menor (200,00 no topo igual da print)
-        for valor in reversed(VALORES):
-            embed = discord.Embed(
-                title=f"• {modo} • R$ {valor}",
-                description="**Jogadores**\nNenhum jogador na fila.",
-                color=0x2ECC71 # VERDE
-            )
-            if is_misto:
-                max_emu = 1 if "2x2" in canal.name.lower() else 2 if "3x3" in canal.name.lower() else 3
-                view = ViewMisto(modo, valor, max_emu)
-            else:
-                view = ViewMobileEmu(modo, valor)
-
-            await canal.send(embed=embed, view=view)
-            await asyncio.sleep(0.35)
-        return True
-    except Exception as e:
-        print(f"Erro {canal.name}: {e}")
-        return False
-
-@bot.command(name="reset_total")
-@commands.has_permissions(administrator=True)
-async def reset_total(ctx):
-    await ctx.send(f"🔄 Limpando e criando 13 fileiras por canal com modelo da print...")
-    save_filas({})
-    alvos = ["1x1-mobile","2x2-mobile","3x3-mobile","4x4-mobile","1x1-emulador","2x2-emulador","3x3-emulador","4x4-emulador","2x2-misto","3x3-misto","4x4-misto"]
-    canais=[]
-    for canal in ctx.guild.text_channels:
-        for alvo in alvos:
-            if alvo in canal.name.lower():
-                canais.append(canal); break
-
-    total_filas = len(canais) * len(VALORES)
-    count=0
-    for canal in canais:
-        ok = await limpar_e_criar_fila(canal)
-        if ok: count+=1
-        await asyncio.sleep(1)
-
-    await ctx.send(f"✅ **{count * len(VALORES)} fileiras criadas!**\nModelo: `• 1v1 Mobile • R$ X` com cor VERDE e sistema de nomes funcionando.")
-
-bot.run(os.getenv("DISCORD_TOKEN"))
+# RODA
+bot.run(TOKEN)
