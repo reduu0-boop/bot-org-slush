@@ -1,131 +1,93 @@
 import discord
+from discord.ext import commands
+import json, os
 
-from discord extimport.commande
+intents = discord.Intents.default()
+intents.message_content = True
+intents.members = True
 
-importison, o
+bot = commands.Bot(command_prefix="!", intents=intents)
 
-intents discord.intents default
+ARQ = "filas.json"
 
-interits message content-True
+def load_filas():
+    if not os.path.exists(ARQ): return {}
+    try:
+        with open(ARQ, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except: return {}
 
-intents members True
+def save_filas(d):
+    with open(ARQ, "w", encoding="utf-8") as f:
+        json.dump(d, f, ensure_ascii=False)
 
-bot-commands Boticommand prefis intente-intenti
+filas = load_filas()
 
-ARQ-Tilasjon
 
-def load filas
+class FilaView(discord.ui.View):
+    def __init__(self, canal, valor):
+        super().__init__(timeout=None)
+        self.canal = canal
+        self.valor = valor
 
-if notos path exists(ARC): return
+    def get_desc(self):
+        lista = filas.get(self.canal, [])
+        if not lista: return "🔹 Jogadores:\nNenhum jogador na fila."
+        linhas = [f"{i+1}º - <@{u}>" for i, u in enumerate(lista)]
+        return "🔹 Jogadores:\n" + "\n".join(linhas)
 
-try
+    @discord.ui.button(label="Sair do infinito", style=discord.ButtonStyle.secondary)
+    async def infinito_sair(self, inter: discord.Interaction):
+        filas.setdefault(self.canal, []).remove(inter.user.id)
+        save_filas(filas)
+        emb = inter.message.embeds[0]
+        emb.description = self.get_desc()
+        await inter.response.edit_message(embed=emb, view=self)
 
-import on as p
+    @discord.ui.button(label="Entrar Normal", style=discord.ButtonStyle.secondary)
+    async def normal(self, inter: discord.Interaction):
+        filas.setdefault(self.canal, []).append(inter.user.id)
+        save_filas(filas)
+        emb = inter.message.embeds[0]
+        emb.description = self.get_desc()
+        await inter.response.edit_message(embed=emb, view=self)
 
-return ja lood lopen(ARQ encoding=utf8
+    @discord.ui.button(label="Sair", style=discord.ButtonStyle.danger)
+    async def sair(self, inter: discord.Interaction):
+        uid = inter.user.id
+        if self.canal in filas and uid in filas[self.canal]:
+            filas[self.canal].remove(uid)
+            save_filas(filas)
+        emb = inter.message.embeds[0]
+        emb.description = self.get_desc()
+        await inter.response.edit_message(embed=emb, view=self)
 
-except return
 
-pon dumpid openlARQw'encoding="ut
+@bot.event
+async def on_ready():
+    print("ok")
 
-defsave filasid
-
-filas-load files
-
-class Fila View discord ui. View:
-
-definit beltchave valor
-
-super init (timeout Nonel
-
-self chave-chave: soltvator-valor
-
-def get desc tef
-
-lista-frangetion if chave
-
-if not lista return "JogadoresinNenhum jogador na lila
-
-anhas-Gelo <@Mul>"krutin lista items)
-
-return "Jogadoresin"+"njonilinhasi
-
-@discord ut button(label-Gelo Infinito, style diacord Button Style.secondary
-
-async def infinibelt intec buttoni
-
-lassetdefault/selfchavestriinter.user.idi-Infinito
-
-save filasifilasi
-
-emb-inter.message embed emb.description-self get desc()
-
-awaitinter.response edit, message is mbed-emb, view-self
-
-@discord ut button(label-Gelo Normal" style cord Button Style.secondary
-
-asyric del normalisell inter, button
-
-flas.setdefault/selfchavestrinter.user.idi)-"Normal"
-
-save filasifilasi
-
-emb-inter.message.embed emb description=self get_desc()
-
-awaitinter.response.edit messagsis mbed-emb, view-se if
-
-@discord ut button(label-Saar, style diacord Button Style dangon
-
-async defseirisell intes buttoni
-
-if selfchave in files and uid in filasise if chave del filasiselt chavelluid)
-
-uid-strlinser.user.ad
-
-save filasifitasi
-
-emb-inter.message embedd emb.description-self get desc
-
-await inter resperise edit, message lembed-emts view-self
-
-@botevent
-
-asyncdef on ready printa
 
 @bot.command()
+async def painel_todas(ctx):
+    await ctx.message.delete()
+    for canal in ctx.guild.text_channels:
+        if "💥" not in canal.name: continue
+        nome = canal.name.lower()
+        if "1v1" not in nome and "1 vs 1" not in nome: continue
+        try:
+            valor = canal.name.split("💥")[-1].replace("•", "").strip()
+        except: valor = "0"
+        if "mobile" in nome.lower(): titulo = f"🏆 1v1 Mobile - R${valor}"
+        else: titulo = f"🏆 1v1 - R${valor}"
 
-async def painel, todosic
+        filas.setdefault(canal.id, [])
+        desc = "🔹 Jogadores:\nNenhum jogador na fila."
+        if filas[canal.id]:
+            desc = "🔹 Jogadores:\n" + "\n".join([f"{i+1}º - <@{u}>" for i, u in enumerate(filas[canal.id])])
 
-await cho message delete
+        emb = discord.Embed(title=titulo, description=desc, color=0x2B2D31)
+        await canal.send(embed=emb, view=FilaView(canal.id, valor))
 
-for canalinctcguild text channels
 
-if not in canal name continue
-
-nome-canal name lover
-
-if "x1" not in nome and "Iv1" not in nome: continue
-
-try: valor-carnal.namesplit-1] replace(strip
-
-except valor
-
-if "mobile" in nome: titulo-Ply Mobile R$ (valor)
-
-ebe: stulo-v1-RS Salor
-
-chave-canalnamel, valori
-
-Masseldefaultlichave,
-
-desc"Jogadoreeri Nenhum jogador na fita
-
-Flaschevel
-
-dese "Jogadoreslinjan Peto@ful for tinflasichave items
-
-embed-discord Embedititie-bitulo description-desc, color-0x282001)
-
-await.canal.sendlembed=embed view Fila Viewichave.valoril
-
-bot runtasgetenv DISCORD TOKENT
+bot.run(os.getenv("DISCORD_TOKEN"))
