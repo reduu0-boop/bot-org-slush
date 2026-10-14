@@ -1,125 +1,131 @@
 import discord
-from discord.ext import commands
-import os
-import json
 
-TOKEN = os.getenv("DISCORD_TOKEN")
-VERDE = 0x00FF7F
-ARQ_FILA = "filas.json"
+from discord extimport.commande
 
-VALORES = ["0,70","1,00","2,00","3,00","4,00","5,00","10,00","30,00","40,00","50,00","100,00","150,00","200,00"]
+importison, o
 
-CANAIS_SLUSH = [
-    "🦔・1x1-mobile",
-    "🦔・2x2-mobile",
-    "🦔・3x3-mobile",
-    "🦔・4x4-mobile",
-    "🦔・2x2-misto",
-    "🦔・3x3-misto",
-    "🦔・4x4-misto",
-    "🦔・1x1-emulador",
-    "🦔・2x2-emulador",
-    "🦔・3x3-emulador",
-    "🦔・4x4-emulador"
-]
+intents discord.intents default
 
-def get_taxa(v):
-    return 0.50 if v <= 30 else 2.50
+interits message content-True
 
-def load_json(arq):
-    if not os.path.exists(arq):
-        return {}
-    try:
-        with open(arq, "r") as f:
-            return json.load(f)
-    except:
-        return {}
+intents members True
 
-def save_json(arq, data):
-    with open(arq, "w") as f:
-        json.dump(data, f)
+bot-commands Boticommand prefis intente-intenti
 
-intents = discord.Intents.default()
-intents.message_content = True
-intents.members = True
-bot = commands.Bot(command_prefix="!", intents=intents)
+ARQ-Tilasjon
 
-# --- VIEW COM BOTÃO IGUAL DA REFERÊNCIA ---
-class FilaView(discord.ui.View):
-    def __init__(self, canal_nome, valor_str):
-        super().__init__(timeout=None)
-        self.canal_nome = canal_nome
-        self.valor_str = valor_str
+def load filas
 
-    @discord.ui.button(label="Entrar", style=discord.ButtonStyle.success)
-    async def entrar(self, inter, btn):
-        filas = load_json(ARQ_FILA)
-        chave = f"{self.canal_nome}_{self.valor_str}"
-        if chave not in filas:
-            filas[chave] = []
-        if inter.user.id not in filas[chave]:
-            filas[chave].append(inter.user.id)
-            save_json(ARQ_FILA, filas)
-            await inter.response.send_message(f"Entrou na fila R$ {self.valor_str}", ephemeral=True)
-        else:
-            await inter.response.send_message("Já está na fila", ephemeral=True)
+if notos path exists(ARC): return
 
-    @discord.ui.button(label="Sair", style=discord.ButtonStyle.danger)
-    async def sair(self, inter, btn):
-        filas = load_json(ARQ_FILA)
-        chave = f"{self.canal_nome}_{self.valor_str}"
-        if chave in filas and inter.user.id in filas[chave]:
-            filas[chave].remove(inter.user.id)
-            save_json(ARQ_FILA, filas)
-        await inter.response.send_message("Saiu da fila", ephemeral=True)
+try
 
-# --- PAINEIS LIMPOS ---
-@bot.command()
-async def painel_todos(ctx):
-    for nome_canal in CANAIS_SLUSH:
-        canal = discord.utils.get(ctx.guild.channels, name=nome_canal)
-        if not canal:
-            continue
-        for valor in VALORES:
-            emb = discord.Embed(
-                title=f"• {nome_canal.split('・')[1]} - R$ {valor}",
-                description="Jogadores: Nenhum na fila",
-                color=VERDE
-            )
-            await canal.send(embed=emb, view=FilaView(nome_canal, valor))
+import on as p
 
-@bot.command()
-async def painel_aqui(ctx):
-    nome_canal = ctx.channel.name
-    for valor in VALORES:
-        emb = discord.Embed(
-            title=f"• {nome_canal.split('・')[1]} - R$ {valor}",
-            description="Jogadores: Nenhum na fila",
-            color=VERDE
-        )
-        await ctx.send(embed=emb, view=FilaView(nome_canal, valor))
+return ja lood lopen(ARQ encoding=utf8
 
-# --- LIMPEZA ---
-@bot.command()
-@commands.has_permissions(manage_messages=True)
-async def limpar(ctx):
-    await ctx.channel.purge(limit=100)
+except return
+
+pon dumpid openlARQw'encoding="ut
+
+defsave filasid
+
+filas-load files
+
+class Fila View discord ui. View:
+
+definit beltchave valor
+
+super init (timeout Nonel
+
+self chave-chave: soltvator-valor
+
+def get desc tef
+
+lista-frangetion if chave
+
+if not lista return "JogadoresinNenhum jogador na lila
+
+anhas-Gelo <@Mul>"krutin lista items)
+
+return "Jogadoresin"+"njonilinhasi
+
+@discord ut button(label-Gelo Infinito, style diacord Button Style.secondary
+
+async def infinibelt intec buttoni
+
+lassetdefault/selfchavestriinter.user.idi-Infinito
+
+save filasifilasi
+
+emb-inter.message embed emb.description-self get desc()
+
+awaitinter.response edit, message is mbed-emb, view-self
+
+@discord ut button(label-Gelo Normal" style cord Button Style.secondary
+
+asyric del normalisell inter, button
+
+flas.setdefault/selfchavestrinter.user.idi)-"Normal"
+
+save filasifilasi
+
+emb-inter.message.embed emb description=self get_desc()
+
+awaitinter.response.edit messagsis mbed-emb, view-se if
+
+@discord ut button(label-Saar, style diacord Button Style dangon
+
+async defseirisell intes buttoni
+
+if selfchave in files and uid in filasise if chave del filasiselt chavelluid)
+
+uid-strlinser.user.ad
+
+save filasifitasi
+
+emb-inter.message embedd emb.description-self get desc
+
+await inter resperise edit, message lembed-emts view-self
+
+@botevent
+
+asyncdef on ready printa
 
 @bot.command()
-@commands.has_permissions(manage_messages=True)
-async def limpar_todos(ctx):
-    await ctx.send("Limpando todos os canais...")
-    for nome_canal in CANAIS_SLUSH:
-        canal = discord.utils.get(ctx.guild.channels, name=nome_canal)
-        if canal:
-            try:
-                await canal.purge(limit=100)
-            except:
-                pass
-    await ctx.send("Todos limpos!")
 
-@bot.event
-async def on_ready():
-    print(f"ORG SLUSH VERDE ON - {bot.user}")
+async def painel, todosic
 
-bot.run(TOKEN)
+await cho message delete
+
+for canalinctcguild text channels
+
+if not in canal name continue
+
+nome-canal name lover
+
+if "x1" not in nome and "Iv1" not in nome: continue
+
+try: valor-carnal.namesplit-1] replace(strip
+
+except valor
+
+if "mobile" in nome: titulo-Ply Mobile R$ (valor)
+
+ebe: stulo-v1-RS Salor
+
+chave-canalnamel, valori
+
+Masseldefaultlichave,
+
+desc"Jogadoreeri Nenhum jogador na fita
+
+Flaschevel
+
+dese "Jogadoreslinjan Peto@ful for tinflasichave items
+
+embed-discord Embedititie-bitulo description-desc, color-0x282001)
+
+await.canal.sendlembed=embed view Fila Viewichave.valoril
+
+bot runtasgetenv DISCORD TOKENT
