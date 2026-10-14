@@ -1,12 +1,20 @@
 import discord
 from discord.ext import commands
-import json, os, datetime
+import json, os, datetime, asyncio
 
 intents = discord.Intents.all()
 bot = commands.Bot(command_prefix="!", intents=intents)
 
 BLACKLIST_FILE = "blacklist.json"
-AP_FILE = "ap_data.json" # troquei de nome pra não confundir com suporte
+AP_FILE = "ap_data.json"
+FILA_FILE = "filas.json"
+
+# Canais que vão ser limpos e virar fila
+CANAIS_FILA = [
+    "1x1-mobile", "2x2-mobile", "3x3-mobile", "4x4-mobile",
+    "2x2-misto", "3x3-misto", "4x4-misto",
+    "1x1-emulador", "2x2-emulador", "3x3-emulador", "4x4-emulador"
+]
 
 def load_bl():
     if not os.path.exists(BLACKLIST_FILE): return {}
@@ -20,7 +28,20 @@ def load_ap():
 def save_ap(data):
     with open(AP_FILE, "w") as f: json.dump(data, f, indent=4)
 
-# ===== MODAIS BLACKLIST =====
+def load_filas():
+    if not os.path.exists(FILA_FILE): return {}
+    with open(FILA_FILE, "r") as f: return json.load(f)
+def save_filas(data):
+    with open(FILA_FILE, "w") as f: json.dump(data, f, indent=4)
+
+def qtd_necessaria(nome_canal):
+    if "1x1" in nome_canal: return 2
+    if "2x2" in nome_canal: return 4
+    if "3x3" in nome_canal: return 6
+    if "4x4" in nome_canal: return 8
+    return 2
+
+# ===== BLACKLIST MODAIS =====
 class ConsultarIDModal(discord.ui.Modal, title="Consultar ID na Blacklist"):
     id_input = discord.ui.TextInput(label="Digite o ID", placeholder="Ex: 123456789")
     async def on_submit(self, interaction: discord.Interaction):
@@ -38,7 +59,7 @@ class ConsultarIDModal(discord.ui.Modal, title="Consultar ID na Blacklist"):
             await interaction.response.send_message(embed=discord.Embed(title="✅ LIMPO", description=f"ID `{id_p}` não está na blacklist.", color=0x00ff00), ephemeral=True)
 
 class ConsultarNickModal(discord.ui.Modal, title="Consultar Jogador"):
-    nick_input = discord.ui.TextInput(label="Digite o nick", placeholder="Ex: Cauan_ff")
+    nick_input = discord.ui.TextInput(label="Digite o nick")
     async def on_submit(self, interaction: discord.Interaction):
         data = load_bl()
         busca = self.nick_input.value.lower()
@@ -47,7 +68,7 @@ class ConsultarNickModal(discord.ui.Modal, title="Consultar Jogador"):
             desc = "\n".join([f"**{v.get('nick')}** - ID: {k} | {v['motivo']}" for k,v in achados[:10]])
             await interaction.response.send_message(embed=discord.Embed(title=f"⛔ {len(achados)} encontrados", description=desc, color=0xff0000), ephemeral=True)
         else:
-            await interaction.response.send_message(embed=discord.Embed(title="✅ NADA ENCONTRADO", description="Nenhum nick parecido na blacklist.", color=0x00ff00), ephemeral=True)
+            await interaction.response.send_message(embed=discord.Embed(title="✅ NADA ENCONTRADO", description="Nenhum nick parecido.", color=0x00ff00), ephemeral=True)
 
 class BlacklistView(discord.ui.View):
     def __init__(self): super().__init__(timeout=None)
@@ -56,7 +77,87 @@ class BlacklistView(discord.ui.View):
     @discord.ui.button(label="Consultar Jogador", style=discord.ButtonStyle.secondary, emoji="🔍", custom_id="bl_nick")
     async def b2(self, interaction, button): await interaction.response.send_modal(ConsultarNickModal())
 
-# ===== SISTEMA DE AP =====
+# ===== FILA VIEW =====
+class FilaView(discord.ui.View):
+    def __init__(self): super().__init__(timeout=None)
+
+    @discord.ui.button(label="Gelo Infinito", style=discord.ButtonStyle.primary, emoji="❄️", custom_id="fila_gelo_inf")
+    async def gelo_inf(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.entrar_fila(interaction, "Gelo Infinito")
+
+    @discord.ui.button(label="Gelo Normal", style=discord.ButtonStyle.secondary, emoji="🧊", custom_id="fila_gelo_normal")
+    async def gelo_normal(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.entrar_fila(interaction, "Gelo Normal")
+
+    @discord.ui.button(label="Sair", style=discord.ButtonStyle.danger, emoji="🚪", custom_id="fila_sair")
+    async def sair(self, interaction: discord.Interaction, button: discord.ui.Button):
+        filas = load_filas()
+        canal_id = str(interaction.channel.id)
+        lista = filas.get(canal_id, [])
+        if str(interaction.user.id) in lista:
+            lista.remove(str(interaction.user.id))
+            filas[canal_id] = lista
+            save_filas(filas)
+            await interaction.response.send_message("Você saiu da fila.", ephemeral=True)
+            await self.atualizar_embed(interaction.channel)
+        else:
+            await interaction.response.send_message("Você nem está na fila.", ephemeral=True)
+
+    async def entrar_fila(self, interaction: discord.Interaction, tipo):
+        # CHECA BLACKLIST
+        bl = load_bl()
+        if str(interaction.user.id) in bl:
+            await interaction.response.send_message(f"⛔ Você está na blacklist! Motivo: {bl[str(interaction.user.id)]['motivo']}", ephemeral=True)
+            return
+
+        filas = load_filas()
+        canal_id = str(interaction.channel.id)
+        lista = filas.get(canal_id, [])
+
+        if str(interaction.user.id) in lista:
+            await interaction.response.send_message("Você já está na fila!", ephemeral=True)
+            return
+
+        lista.append(str(interaction.user.id))
+        filas[canal_id] = lista
+        save_filas(filas)
+
+        await interaction.response.send_message(f"✅ Entrou na fila [{tipo}]! Posição: {len(lista)}", ephemeral=True)
+        await self.atualizar_embed(interaction.channel)
+
+        # Se fila lotou
+        necessario = qtd_necessaria(interaction.channel.name)
+        if len(lista) >= necessario:
+            mencoes = " ".join([f"<@{uid}>" for uid in lista[:necessario]])
+            await interaction.channel.send(f"🔥 **FILA FECHOU!** {mencoes}\nModo: {tipo}\nPartida de {interaction.channel.name} vai começar! ( {necessario} jogadores )")
+            # Limpa quem entrou
+            filas[canal_id] = lista[necessario:]
+            save_filas(filas)
+            await self.atualizar_embed(interaction.channel)
+
+    async def atualizar_embed(self, canal):
+        filas = load_filas()
+        lista = filas.get(str(canal.id), [])
+        necessario = qtd_necessaria(canal.name)
+
+        embed = discord.Embed(
+            title=f"🎮 FILA - {canal.name.upper()}",
+            description=f"**Jogadores na fila: {len(lista)}/{necessario}**\n\n" +
+            ("\n".join([f"{i+1}. <@{uid}>" for i, uid in enumerate(lista)]) if lista else "*Fila vazia - clique para entrar*"),
+            color=0x2b2d31
+        )
+        embed.set_footer(text="Blacklist ativa - jogadores banidos não entram")
+
+        # Tenta editar a última mensagem do bot, se não conseguir só manda info
+        try:
+            async for msg in canal.history(limit=10):
+                if msg.author == canal.guild.me and msg.embeds:
+                    if "FILA -" in msg.embeds[0].title:
+                        await msg.edit(embed=embed, view=FilaView())
+                        return
+        except: pass
+
+# ===== AP VIEW =====
 class AprovacaoView(discord.ui.View):
     def __init__(self): super().__init__(timeout=None)
     @discord.ui.button(label="Aceitar AP", style=discord.ButtonStyle.success, custom_id="aceitar_ap")
@@ -64,32 +165,51 @@ class AprovacaoView(discord.ui.View):
         aps = load_ap()
         canal_id = str(interaction.channel.id)
         if canal_id not in aps:
-            await interaction.response.send_message("Sala de AP não encontrada.", ephemeral=True); return
+            await interaction.response.send_message("Sala não encontrada.", ephemeral=True); return
         ticket = aps[canal_id]
         user_id = str(interaction.user.id)
         if user_id not in ticket["aceitaram"]:
             ticket["aceitaram"].append(user_id)
             save_ap(aps)
         if len(ticket["aceitaram"]) >= 2:
-            embed = discord.Embed(title="✅ AP CONFIRMADO", description=f"Os dois confirmaram!\nAP de R$ {ticket['valor']}\nPode começar.", color=0x00ff00)
-            await interaction.channel.send(embed=embed)
+            await interaction.channel.send(embed=discord.Embed(title="✅ AP CONFIRMADO", description=f"AP de R$ {ticket['valor']} confirmado!", color=0x00ff00))
             await interaction.response.send_message("Você aceitou!", ephemeral=True)
         else:
-            await interaction.response.send_message("Você aceitou! Aguardando o outro jogador aceitar.", ephemeral=True)
-
+            await interaction.response.send_message("Você aceitou! Aguardando o outro.", ephemeral=True)
     @discord.ui.button(label="Cancelar AP", style=discord.ButtonStyle.danger, custom_id="cancelar_ap")
     async def cancelar(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.channel.send(f"❌ AP cancelado por {interaction.user.mention}")
-        await interaction.response.send_message("AP cancelado.", ephemeral=True)
 
 @bot.event
 async def on_ready():
     print(f"Online: {bot.user}")
     bot.add_view(BlacklistView())
+    bot.add_view(FilaView())
     bot.add_view(AprovacaoView())
     try: await bot.tree.sync()
     except: pass
 
+async def limpar_e_criar_fila(canal):
+    try:
+        # Limpa tudo
+        await canal.purge(limit=100)
+        await asyncio.sleep(1)
+        await canal.purge(limit=100)
+
+        necessario = qtd_necessaria(canal.name)
+        embed = discord.Embed(
+            title=f"🎮 FILA - {canal.name.upper()}",
+            description=f"**Jogadores na fila: 0/{necessario}**\n\n*Fila vazia - clique para entrar*\n\n❄️ Gelo Infinito | 🧊 Gelo Normal",
+            color=0x2b2d31
+        )
+        embed.set_footer(text="Use os botões abaixo para entrar na fila")
+        await canal.send(embed=embed, view=FilaView())
+        return True
+    except Exception as e:
+        print(f"Erro no canal {canal.name}: {e}")
+        return False
+
+# ===== COMANDOS =====
 @bot.tree.command(name="blacklist_setup", description="Cria o painel da blacklist")
 async def blacklist_setup(interaction: discord.Interaction):
     if not interaction.user.guild_permissions.administrator:
@@ -105,7 +225,7 @@ async def bl_add(interaction: discord.Interaction, id_jogador: str, nick: str, m
     data = load_bl()
     data[id_jogador] = {"nick": nick, "motivo": motivo, "data": datetime.datetime.now().strftime("%d/%m/%Y %H:%M"), "por": str(interaction.user)}
     save_bl(data)
-    await interaction.response.send_message(f"⛔ {nick} ({id_jogador}) adicionado: {motivo}", ephemeral=True)
+    await interaction.response.send_message(f"⛔ {nick} ({id_jogador}) adicionado.", ephemeral=True)
 
 @bot.tree.command(name="bl_remove", description="Remove da blacklist")
 async def bl_remove(interaction: discord.Interaction, id_jogador: str):
@@ -123,8 +243,7 @@ async def ap(interaction: discord.Interaction, adversario: discord.Member, valor
     if id_adversario:
         bl = load_bl()
         if id_adversario in bl:
-            info = bl[id_adversario]
-            await interaction.response.send_message(f"⛔ NEGADO! O ID {id_adversario} está na blacklist.\nMotivo: {info['motivo']}", ephemeral=True)
+            await interaction.response.send_message(f"⛔ NEGADO! ID {id_adversario} está na blacklist.", ephemeral=True)
             return
     guild = interaction.guild
     categoria = discord.utils.get(guild.categories, name="AP - ATIVO")
@@ -140,24 +259,32 @@ async def ap(interaction: discord.Interaction, adversario: discord.Member, valor
     aps = load_ap()
     aps[str(canal.id)] = {"valor": valor, "jogadores": [str(interaction.user.id), str(adversario.id)], "aceitaram": []}
     save_ap(aps)
-    embed = discord.Embed(title="💰 SALA DE AP CRIADA", description=f"{interaction.user.mention} vs {adversario.mention}\n**Valor: R$ {valor}**\n\nFaçam o PIX e cliquem em Aceitar AP.", color=0x2b2d31)
+    embed = discord.Embed(title="💰 SALA DE AP CRIADA", description=f"{interaction.user.mention} vs {adversario.mention}\n**Valor: R$ {valor}**", color=0x2b2d31)
     await canal.send(content=f"{interaction.user.mention} {adversario.mention}", embed=embed, view=AprovacaoView())
     await interaction.response.send_message(f"Sala criada: {canal.mention}", ephemeral=True)
+
+# O FAMOSO RESET_TOTAL - AGORA COM LIMPEZA
 @bot.command(name="reset_total")
 @commands.has_permissions(administrator=True)
 async def reset_total(ctx):
-    # se seu arquivo de filas chama filas.json
-    if os.path.exists("filas.json"):
-        os.remove("filas.json")
-    # se chama total.json
-    if os.path.exists("total.json"):
-        os.remove("total.json")
-    
-    await ctx.send("✅ Total de filas resetado! Todas as fileiras foram apagadas.")
+    await ctx.send("🔄 Limpando todas as filas... Aguarde.")
 
-@reset_total.error
-async def reset_error(ctx, error):
-    if isinstance(error, commands.MissingPermissions):
-        await ctx.send("Você precisa ser ADM pra usar isso.")
-        
+    # Zera o arquivo de filas
+    save_filas({})
+
+    count = 0
+    for nome in CANAIS_FILA:
+        canal = discord.utils.get(ctx.guild.channels, name=nome)
+        if canal:
+            ok = await limpar_e_criar_fila(canal)
+            if ok: count += 1
+            await asyncio.sleep(1) # evita rate limit
+
+    await ctx.send(f"✅ **{count} fileiras recriadas!**\nCanais limpos: {', '.join(CANAIS_FILA[:count])}\nBlacklist continua ativa.")
+
+@bot.command(name="setup_filas")
+@commands.has_permissions(administrator=True)
+async def setup_filas(ctx):
+    await reset_total(ctx)
+
 bot.run(os.getenv("DISCORD_TOKEN"))
