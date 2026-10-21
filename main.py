@@ -295,7 +295,7 @@ async def fila(ctx):
 
 @bot.command()
 async def suporte(ctx):
-    emb = discord.Embed(title="SUPORTE ORG SLUSH", description="Clique abaixo para abrir ticket privado.", color=0x5865F2)
+    emb = discord.Embed(title="SUPORTE ORG PAGUI", description="Clique abaixo para abrir ticket privado.", color=0x5865F2)
     await ctx.send(embed=emb, view=TicketView())
 
 @bot.command()
